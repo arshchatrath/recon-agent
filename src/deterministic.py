@@ -206,10 +206,13 @@ def evaluate(pred: dict, left, right, rules: "RuleSet | None" = None):
         if gross is None or net is None or rules is None:
             return INAPPLICABLE
         status = _d(left, "status")
-        if status is None:
+        if status is None or status != "refunded_partial":
+            # No opinion, not a denial. In the matching path these are
+            # equivalent (both fall through to the next rule), but the backtest
+            # reads False as "contradicts a resolved record" -- so returning it
+            # here made every clean settlement in history count against the
+            # rule, 44 out of 44, and it could never be promoted.
             return INAPPLICABLE
-        if status != "refunded_partial":
-            return False
         expected = rules.expected_net(gross, instr)
         if expected is None:
             return INAPPLICABLE
@@ -387,7 +390,13 @@ def backtest(conn, predicate, exclude_batch=None) -> dict:
     up immediately. That is the gate catching a plausible-looking wrong answer.
     """
     predicate = validate_predicate(predicate)
-    rules = RuleSet([])
+    # The already-promoted library, for rules that depend on it. A refund rule
+    # says "the net fell short of what the fee schedule implies", which is
+    # unanswerable without the fee rules -- judged against an empty library it
+    # is INAPPLICABLE everywhere, scores zero support, and can never be
+    # promoted. Only refund_pattern consults this; a fee or timing predicate is
+    # still evaluated entirely on its own terms.
+    rules = RuleSet.load(conn)
 
     # Two independent sources of already-resolved evidence, unioned:
     #
@@ -444,7 +453,10 @@ def backtest(conn, predicate, exclude_batch=None) -> dict:
         if o["order_id"] in split_orders:
             skipped += 1
             continue
-        if o["status"] != "captured":
+        # A refund rule's whole subject is refunded orders, so skipping them
+        # would leave it permanently without evidence. For every other rule
+        # type they are noise.
+        if predicate.get("type") != "refund_pattern" and o["status"] != "captured":
             # The merchant's own ledger says this order was refunded, so a
             # short settlement is expected. Holding that against a fee rule
             # would be scoring it on a question it was never asked. This is

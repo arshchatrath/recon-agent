@@ -66,22 +66,27 @@ unforgiving because the domain is money.
 
 ```
  batch  excep   llm  /100rec  avoided   match    prec  recall   FP  rules   cost
-     1     68    57     43.5       11   44.3%  100.0%   50.4%    0      1     68
-     2     19    18     13.7       10   80.2%  100.0%   92.3%    0      5     19
-     3     19     9      7.0       12   80.5%  100.0%   93.7%    0      7     19
-     4     18     7      5.3       11   81.1%  100.0%   94.0%    0      8     18
-   adv      8     8     16.0        0   70.0%  100.0%   72.7%    0      8      8
+     1     68    58     44.3       11   44.3%  100.0%   50.4%    0      1     68
+     2     19    20     15.3       10   80.2%  100.0%   92.3%    0      5     19
+     3     14     5      3.9       12   84.4%  100.0%   98.2%    0      8     14
+     4     12     1      0.8       11   85.6%  100.0%   99.2%    0      9     12
+   adv      5     5     10.0        0   76.0%  100.0%   79.5%    0      9      5
 ```
 
 | | batch 1 | batch 4 |
 |---|---|---|
-| Open exceptions | 68 | 18 |
-| LLM calls per 100 records | 43.5 | 5.3 |
-| Match rate | 44.3% | 81.1% |
-| Recall | 50.4% | 94.0% |
+| Open exceptions | 68 | 12 |
+| LLM calls per 100 records | 44.3 | **0.8** |
+| Match rate | 44.3% | 85.6% |
+| Recall | 50.4% | 99.2% |
 | Precision | 100% | 100% |
 | **False positives** | **0** | **0** |
-| Active rules | 1 | 8 |
+| Active rules | 1 | 9 |
+
+By batch 4 the deterministic layer answers essentially everything: **less than
+one LLM call per hundred records**, down from forty-four. That is the whole
+thesis — the model is expensive and fallible, so use it to write rules once,
+not to make decisions forever.
 
 The adversarial set scores lower on recall by design: its `off_by_one_day`
 records settle a working day outside the learned window, so they are flagged
@@ -101,6 +106,7 @@ NETBANKING   deducts a flat 1200 paise, plus 18% GST on that fee
 UPI          settles 1 working day after the order
 CARD_DEBIT   settles 2 working days after the order
 CARD_CREDIT  settles 2 working days after the order
+ALL          a net below the fee-implied net indicates a partial refund
 ```
 
 Both halves of the merchant's fingerprint: the fee schedule and the settlement
@@ -267,7 +273,7 @@ and **no rules promoted**, because nothing is proposing any. That is the
 correct cold-start behaviour, not a failure — see the note above the results.
 
 Add `--no-llm` to skip the escalation attempt entirely. `python -m pytest` runs
-347 tests and needs no API key; the model is stubbed throughout.
+349 tests and needs no API key; the model is stubbed throughout.
 
 Ask it things:
 

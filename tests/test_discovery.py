@@ -117,9 +117,9 @@ def test_discovery_stops_once_the_rule_is_known(conn):
     per-batch tax rather than a one-off cost of learning."""
     _, summaries = run(conn)
     per_batch = [s.get("discovery_cases", 0) for s in summaries]
-    assert per_batch[0] == 0, "batch 1 has no resolved records to sample yet"
     assert max(per_batch) > 0, "discovery must actually run"
     assert per_batch[-1] < max(per_batch), f"must taper: {per_batch}"
+    assert per_batch[-1] <= 3, f"should be near-silent once learned: {per_batch}"
 
 
 def test_discovery_asks_nothing_about_a_rule_already_active(conn):

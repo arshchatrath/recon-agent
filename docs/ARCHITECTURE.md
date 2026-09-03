@@ -238,7 +238,7 @@ was never asked. That status column is ledger data, not ground truth.
 ## What is verified, and what is not
 
 The deterministic layers, the gate, the metrics and the storage are exercised
-by 347 tests and by full runs over five batches, with the proposal step driven
+by 349 tests and by full runs over five batches, with the proposal step driven
 by a test double.
 
 The proposal step has separately been run live (Gemini 3.1 Flash Lite, batch 1,

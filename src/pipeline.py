@@ -25,7 +25,7 @@ from src.assignment import solve_component
 from src.calendar_utils import working_days_between
 from src.config import load
 from src.db import get_conn, ingest_batch, init_db, reset_db
-from src.deterministic import INAPPLICABLE, RuleSet, evaluate
+from src.deterministic import ALL, INAPPLICABLE, RuleSet, evaluate
 from src.llm_reasoner import LLMReasoner
 from src.rule_engine import process_proposals
 from src.subset_sum import disambiguate, solve
@@ -400,7 +400,8 @@ class BatchRun:
                      exc["exception_id"]))
 
     # ------------------------------------------------------- rule discovery
-    DISCOVERABLE = ("timing_window", "refund_pattern")
+    DISCOVERABLE = {"timing_window": "per_instrument",
+                    "refund_pattern": "library_wide"}
 
     def run_discovery_leg(self):
         """Ask about dimensions that never produce an exception.
@@ -426,14 +427,19 @@ class BatchRun:
         n_samples = cfg.get("samples_per_batch", 3)
         n_examples = cfg.get("examples_per_sample", 5)
 
-        for rule_type in self.DISCOVERABLE:
-            for instrument in self.instruments_seen():
+        min_examples = cfg.get("min_examples_per_sample", 3)
+        for rule_type, scope in self.DISCOVERABLE.items():
+            # A fee or a settlement lag differs by instrument. A partial refund
+            # does not -- it is the same phenomenon whichever way the customer
+            # paid -- so asking per instrument just splits an already thin pool
+            # four ways and nothing ever reaches enough examples.
+            targets = self.instruments_seen() if scope == "per_instrument" else [ALL]
+            for instrument in targets:
                 if self.rules.of_type(rule_type, instrument):
                     continue                     # already known; ask nothing
                 pool = self.discovery_pool(rule_type, instrument)
-                if len(pool) < n_examples:
+                if len(pool) < min_examples:
                     continue
-                min_examples = cfg.get("min_examples_per_sample", 3)
                 for i in range(n_samples):
                     sample = pool[i * n_examples:(i + 1) * n_examples]
                     if len(sample) < min_examples:
@@ -478,11 +484,13 @@ class BatchRun:
                    "   GROUP BY left_id HAVING COUNT(*) = 1)")
         else:   # refund_pattern -- the ledger says these were partly refunded
             sql = ("SELECT o.order_id, o.order_datetime, o.gross_amount_paise,"
-                   " o.status, s.settlement_txn_id, s.settled_datetime,"
-                   " s.net_amount_paise FROM settlements s"
+                   " o.status, s.instrument, s.settlement_txn_id,"
+                   " s.settled_datetime, s.net_amount_paise FROM settlements s"
                    " JOIN orders o ON o.order_id = s.order_id_claimed"
-                   " WHERE s.batch_id=? AND s.instrument=?"
-                   " AND o.status='refunded_partial'")
+                   " WHERE s.batch_id=? AND o.status='refunded_partial'"
+                   " AND (?='ALL' OR s.instrument=?)")
+            return [dict(r) for r in self.conn.execute(
+                sql, (self.batch_id, instrument, instrument))]
         return [dict(r) for r in self.conn.execute(sql, (self.batch_id, instrument))]
 
     def discovery_case(self, rule_type, instrument, sample) -> dict:

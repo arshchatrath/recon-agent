@@ -143,10 +143,15 @@ def test_refund_pattern_is_inapplicable_until_a_fee_rule_exists():
 def test_refund_pattern_requires_the_ledger_to_say_it_was_refunded():
     """Without this condition the rule reads 'any shortfall is a refund', which
     would explain away every genuine mismatch in the batch. The status column
-    is the merchant's own ledger data, not ground truth."""
+    is the merchant's own ledger data, not ground truth.
+
+    A captured order is INAPPLICABLE rather than False: in the matching path
+    the two are equivalent, but the backtest reads False as 'contradicts a
+    resolved record', which would make every clean settlement count against
+    the rule and block it forever."""
     learned = RuleSet([rule(1, "fee_formula", "CARD_CREDIT", fee_pred())])
     captured = order(status="captured")
-    assert evaluate(REFUND, captured, stl(net=50_000), learned) is False
+    assert evaluate(REFUND, captured, stl(net=50_000), learned) == INAPPLICABLE
     refunded = order(status="refunded_partial")
     assert evaluate(REFUND, refunded, stl(net=50_000), learned) is True
 
@@ -161,6 +166,16 @@ def test_refund_pattern_has_no_opinion_without_a_status():
     learned = RuleSet([rule(1, "fee_formula", "CARD_CREDIT", fee_pred())])
     no_status = {k: v for k, v in order().items() if k != "status"}
     assert evaluate(REFUND, no_status, stl(net=50_000), learned) == INAPPLICABLE
+
+
+def test_a_refund_rule_is_not_contradicted_by_ordinary_settlements():
+    """The regression: it must not accrue a counterexample for every clean
+    record in history."""
+    from src.deterministic import backtest
+    learned = RuleSet([rule(1, "fee_formula", "CARD_CREDIT", fee_pred())])
+    for net in (96_400, 96_401, 50_000):
+        assert evaluate(REFUND, order(status="captured"),
+                        stl(net=net), learned) == INAPPLICABLE
 
 
 # --------------------------------------------------------------- rule set

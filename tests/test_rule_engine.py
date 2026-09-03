@@ -153,15 +153,34 @@ def test_the_backtest_rejects_a_rule_that_contradicts_history(conn):
 
 
 def test_insufficient_backtest_support_blocks_promotion(conn):
-    """A rule nothing in history exercises is unproven, not proven safe."""
+    """A rule nothing in history exercises is unproven, not proven safe -- and
+    not proven WRONG either, so it stays pending rather than being rejected.
+    Rejecting it would be permanent: a refund rule proposed before any fee rule
+    exists has no expected net to compare against, and would be killed off
+    before the evidence it needs could ever arrive."""
     ingest_batch(conn, "1")
     propose(conn, true_fee("UPI"), times=5, confidence=0.99)
     out = review_pending(conn)
     assert out["promoted"] == []
-    detail = json.loads(conn.execute(
-        "SELECT detail_json FROM rule_audit WHERE event='rejected'"
-        " ORDER BY audit_id DESC").fetchone()["detail_json"])
-    assert detail["gates"]["backtest"]["support"] == 0
+    assert out["rejected"] == []
+    assert len(out["pending"]) == 1
+
+    passed, report = check_gate(conn, conn.execute(
+        "SELECT * FROM rule_proposals").fetchone())
+    assert not passed
+    assert report["gates"]["backtest"]["support"] == 0
+    assert report["gates"]["backtest"]["insufficient_support"] is True
+
+
+def test_a_rule_rejected_for_lack_of_evidence_can_still_be_promoted_later(conn):
+    """The regression: early rejection must not be a death sentence."""
+    ingest_batch(conn, "1")
+    propose(conn, true_fee("UPI"), times=3, confidence=0.95)
+    assert review_pending(conn)["promoted"] == []      # no history yet
+
+    seed_matches(conn, "UPI", limit=10)                # evidence arrives
+    out = review_pending(conn)
+    assert len(out["promoted"]) == 1, "must be reconsidered once evidence exists"
 
 
 def test_a_rule_overlapping_an_active_one_is_rejected(conn):
@@ -252,10 +271,13 @@ class Proposer:
 
     def resolve(self, case):
         self.calls += 1
-        instr = case["record"].get("instrument")
         self.tokens_in += 400
         self.tokens_out += 150
-        if not instr:
+        instr = case["record"].get("instrument")
+        # This double only knows about fees. Discovery cases (which carry a
+        # "focus" and may be library-wide) are answered by Observer in
+        # tests/test_discovery.py.
+        if case.get("focus") or instr not in MDR:
             return LLMVerdict(confidence=0.1)
         return LLMVerdict(verdict="insufficient_information", confidence=0.9,
                           proposed_rule=true_fee(instr),

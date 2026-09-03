@@ -154,6 +154,12 @@ def check_gate(conn, proposal, cfg=None) -> tuple[bool, dict]:
         "noise_band_paise": noise_band,
         "contradictions_within_noise": within_noise,
         "counterexample_money_paise": money_at_risk,
+        # "Nothing in history exercises this rule yet" is not the same as "this
+        # rule is wrong", and conflating them makes early rejection permanent:
+        # a refund rule proposed before any fee rule exists has no expected net
+        # to compare against, scores zero support, is rejected, and is never
+        # reconsidered however much evidence arrives later.
+        "insufficient_support": bt["support"] < cfg["min_backtest_support"],
         "passed": (bt["support"] >= cfg["min_backtest_support"]
                    and effective_precision >= cfg["backtest_precision_floor"]
                    and not fatal)}
@@ -225,6 +231,18 @@ def reject(conn, proposal, report):
     log.info("rejected proposal %s on gate(s) %s", proposal["proposal_id"], reason)
 
 
+def soft_gates(report) -> set:
+    """Gates whose failure means "not yet", not "no".
+
+    A proposal that fails only these stays pending and gets another look next
+    batch. Anything else is a real verdict and is recorded as a rejection.
+    """
+    soft = {"occurrence", "confidence"}
+    if report["gates"]["backtest"].get("insufficient_support"):
+        soft.add("backtest")
+    return soft
+
+
 def review_pending(conn, batch_id=None, cfg=None) -> dict:
     """Run the gate over every pending proposal. Rejections are as much the
     point as promotions -- they are the evidence the gate is load-bearing."""
@@ -235,7 +253,7 @@ def review_pending(conn, batch_id=None, cfg=None) -> dict:
         passed, report = check_gate(conn, p, cfg)
         if passed:
             promoted.append(promote(conn, p, report))
-        elif set(report["failed_gates"]) <= {"occurrence", "confidence"}:
+        elif set(report["failed_gates"]) <= soft_gates(report):
             # not enough evidence *yet* -- leave it pending for a later batch
             still_pending.append(p["proposal_id"])
         else:

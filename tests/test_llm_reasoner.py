@@ -327,7 +327,8 @@ def test_only_escalatable_exceptions_reach_the_model(conn):
 
     assert r.calls > 40, "the unexplained fees must be escalated"
     assert r.calls_avoided > 0, "unsettled orders must NOT be escalated"
-    reasons = {c["reason_code"] for c in r.seen}
+    # discovery cases carry a focus and are a separate, bounded channel
+    reasons = {c["reason_code"] for c in r.seen if not c.get("focus")}
     assert reasons <= BatchRun.ESCALATABLE
     assert "NO_SETTLEMENT" not in reasons
 
