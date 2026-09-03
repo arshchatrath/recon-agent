@@ -1,0 +1,80 @@
+# Tunable knobs. Nothing here encodes the merchant's fee/timing economics --
+# those are what the system is supposed to learn.
+
+calendar:
+  start_date: "2024-01-01"
+  end_date: "2027-12-31"
+  extra_holidays: []          # ISO dates, merchant/bank-specific closures
+
+generator:
+  batch_days: 7               # calendar days of activity per batch
+  first_batch_start: "2025-01-06"
+  min_gross_paise: 10000      # Rs 100
+  max_gross_paise: 5000000    # Rs 50,000
+  instrument_weights:
+    UPI: 0.45
+    CARD_CREDIT: 0.22
+    CARD_DEBIT: 0.20
+    NETBANKING: 0.13
+  messiness:
+    partial_refund: 0.08
+    full_refund: 0.03
+    duplicate_ledger: 0.04
+    missing_settlement: 0.06
+    orphan_settlement: 0.02
+    chargeback: 0.03
+    rounding_drift: 0.05
+    split_settlement: 0.04
+
+matching:
+  amount_tolerance_paise: 2
+  subset_sum_delta_paise: 300
+  max_solutions: 5
+  date_window_working_days: 6
+
+assignment:
+  w_amount: 1.0
+  w_date: 0.5
+  w_instrument: 1.0
+  w_rule: 1.0
+  instrument_mismatch_big: 1000.0
+  # INVARIANT: w_rule * unexplained_penalty > 2 * unmatched_sink_cost.
+  # A pair that no active rule explains must cost more than declining it. The
+  # factor of two is because declining leaves TWO records unmatched (the order
+  # and the settlement), each charged the sink price. Break this invariant and
+  # the solver will happily bind records it cannot justify -- see
+  # test_empty_rule_library_matches_nothing.
+  unexplained_penalty: 120.0
+  unmatched_sink_cost: 50.0
+  max_bindings_per_order: 2     # split settlements: one order, two payouts
+
+llm:
+  # 'anthropic' (the spec's choice) or 'gemini'. See src/llm_client.py.
+  provider: "gemini"
+  model: "gemini-3.1-flash-lite"
+  anthropic_model: "claude-sonnet-4-6"
+  confidence_floor: 0.75
+  max_retries: 5        # transient 503s under load; retries are cheap
+  # ...but if this many cases fail outright in a row, the service is down or
+  # the quota is gone. Stop escalating for the rest of the run rather than
+  # paying full backoff on every remaining case.
+  give_up_after_failures: 3
+
+rule_engine:
+  min_occurrences: 3
+  confidence_floor: 0.8
+  backtest_precision_floor: 0.98
+  min_backtest_support: 3
+  # A rule that would have contradicted an already-resolved record involving
+  # more than this much money is never promoted, whatever its precision.
+  # Zero means literally zero tolerance, which is the intended setting.
+  zero_tolerance_money_paise: 0
+  # Proposals differing only in tolerance are the same hypothesis and are
+  # merged, keeping the widest allowance up to this cap.
+  max_tolerance_paise: 10
+  retirement_floor: 0.95
+  retirement_min_applications: 10
+
+metrics:
+  fp_cost_weight: 50
+  exception_cost_weight: 1
