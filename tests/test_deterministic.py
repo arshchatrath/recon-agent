@@ -18,9 +18,9 @@ def fee_pred(rate=0.03, gst=0.2, instrument="CARD_CREDIT", tol=2):
 
 
 def order(oid="O1", gross=100_000, instr="CARD_CREDIT",
-          dt="2025-01-06T10:00:00"):
+          dt="2025-01-06T10:00:00", status="captured"):
     return dict(order_id=oid, gross_amount_paise=gross, instrument=instr,
-                order_datetime=dt)
+                order_datetime=dt, status=status)
 
 
 def stl(sid="S1", gross=100_000, net=96_400, instr="CARD_CREDIT",
@@ -128,14 +128,39 @@ def test_narration_pattern_matches_the_batch_id():
     assert evaluate(p, credit, stl(batch="SB2")) is False
 
 
+REFUND = {"type": "refund_pattern", "instrument": ALL,
+          "condition": "net < expected_net", "tolerance_paise": 2}
+
+
 def test_refund_pattern_is_inapplicable_until_a_fee_rule_exists():
-    p = {"type": "refund_pattern", "instrument": ALL,
-         "condition": "net < expected_net", "tolerance_paise": 2}
-    empty = RuleSet([])
-    assert evaluate(p, order(), stl(net=50_000), empty) == INAPPLICABLE
+    """It cannot know what the net *should* have been without one."""
+    refunded = order(status="refunded_partial")
+    assert evaluate(REFUND, refunded, stl(net=50_000), RuleSet([])) == INAPPLICABLE
     learned = RuleSet([rule(1, "fee_formula", "CARD_CREDIT", fee_pred())])
-    assert evaluate(p, order(), stl(net=50_000), learned) is True
-    assert evaluate(p, order(), stl(net=96_400), learned) is False
+    assert evaluate(REFUND, refunded, stl(net=50_000), learned) is True
+
+
+def test_refund_pattern_requires_the_ledger_to_say_it_was_refunded():
+    """Without this condition the rule reads 'any shortfall is a refund', which
+    would explain away every genuine mismatch in the batch. The status column
+    is the merchant's own ledger data, not ground truth."""
+    learned = RuleSet([rule(1, "fee_formula", "CARD_CREDIT", fee_pred())])
+    captured = order(status="captured")
+    assert evaluate(REFUND, captured, stl(net=50_000), learned) is False
+    refunded = order(status="refunded_partial")
+    assert evaluate(REFUND, refunded, stl(net=50_000), learned) is True
+
+
+def test_a_refunded_order_settling_in_full_is_not_a_refund_match():
+    learned = RuleSet([rule(1, "fee_formula", "CARD_CREDIT", fee_pred())])
+    assert evaluate(REFUND, order(status="refunded_partial"),
+                    stl(net=96_400), learned) is False
+
+
+def test_refund_pattern_has_no_opinion_without_a_status():
+    learned = RuleSet([rule(1, "fee_formula", "CARD_CREDIT", fee_pred())])
+    no_status = {k: v for k, v in order().items() if k != "status"}
+    assert evaluate(REFUND, no_status, stl(net=50_000), learned) == INAPPLICABLE
 
 
 # --------------------------------------------------------------- rule set

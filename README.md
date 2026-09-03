@@ -67,21 +67,26 @@ unforgiving because the domain is money.
 ```
  batch  excep   llm  /100rec  avoided   match    prec  recall   FP  rules   cost
      1     68    57     43.5       11   44.3%  100.0%   50.4%    0      1     68
-     2     25    15     11.4       10   77.9%  100.0%   87.2%    0      5     25
-     3     21     9      7.0       12   79.7%  100.0%   91.9%    0      5     21
-     4     24    13      9.8       11   78.8%  100.0%   88.9%    0      5     24
-   adv      5     5     10.0        0   82.0%  100.0%   79.5%    0      5      5
+     2     19    18     13.7       10   80.2%  100.0%   92.3%    0      5     19
+     3     19     9      7.0       12   80.5%  100.0%   93.7%    0      7     19
+     4     18     7      5.3       11   81.1%  100.0%   94.0%    0      8     18
+   adv      8     8     16.0        0   70.0%  100.0%   72.7%    0      8      8
 ```
 
 | | batch 1 | batch 4 |
 |---|---|---|
-| Open exceptions | 68 | 24 |
-| LLM calls per 100 records | 43.5 | 9.8 |
-| Match rate | 44.3% | 78.8% |
-| Recall | 50.4% | 88.9% |
+| Open exceptions | 68 | 18 |
+| LLM calls per 100 records | 43.5 | 5.3 |
+| Match rate | 44.3% | 81.1% |
+| Recall | 50.4% | 94.0% |
 | Precision | 100% | 100% |
 | **False positives** | **0** | **0** |
-| Active rules | 1 | 5 |
+| Active rules | 1 | 8 |
+
+The adversarial set scores lower on recall by design: its `off_by_one_day`
+records settle a working day outside the learned window, so they are flagged
+for review rather than bound. They are genuine settlements, so that costs
+recall — and it is the conservative answer.
 
 Zero false positives across all five runs, including the adversarial set built
 specifically to induce them.
@@ -93,7 +98,13 @@ UPI          settles at par -- no MDR is deducted at all, so there is no GST eit
 CARD_DEBIT   deducts 0.9% of gross, plus 18% GST on that fee (never on the gross)
 CARD_CREDIT  deducts 2% of gross, plus 18% GST on that fee (never on the gross)
 NETBANKING   deducts a flat 1200 paise, plus 18% GST on that fee
+UPI          settles 1 working day after the order
+CARD_DEBIT   settles 2 working days after the order
+CARD_CREDIT  settles 2 working days after the order
 ```
+
+Both halves of the merchant's fingerprint: the fee schedule and the settlement
+rhythm. The timing rules are derived purely from observed working-day lags.
 
 Those are exactly the generator's ground-truth constants. They appear in no
 prompt and in no module outside the generator — `tests/test_generate_data.py`
@@ -256,7 +267,7 @@ and **no rules promoted**, because nothing is proposing any. That is the
 correct cold-start behaviour, not a failure — see the note above the results.
 
 Add `--no-llm` to skip the escalation attempt entirely. `python -m pytest` runs
-327 tests and needs no API key; the model is stubbed throughout.
+347 tests and needs no API key; the model is stubbed throughout.
 
 Ask it things:
 
@@ -300,14 +311,16 @@ code.
 - **This is a proof of concept, not a competitor.** Commercial auto-match
   baselines sit above 90%. We reach 78.8% match rate at 88.9% recall on
   synthetic data, having started from zero domain knowledge.
-- **Split payouts are not matched.** A leg settling ₹400 of a ₹1,000 order is
-  `INAPPLICABLE` to a fee rule, which speaks to full settlements, so the solver
-  declines rather than guessing. That is ~4–6% of records and the single
-  largest cause of missed recall. A learned `split_payout` rule type is the
-  obvious next step.
-- **The exception curve flattens after batch 2**, because refunds, chargebacks
-  and splits have no learnable rule type yet. The fee and timing structure is
-  learned in one batch; the rest is future work. We show the flat part.
+- **The exception curve flattens after batch 2** at around 18–19 open
+  exceptions. What remains is genuinely unresolvable from the data: orders with
+  no settlement row at all, orphan settlements claiming orders that do not
+  exist, and chargeback reversals. Those are exactly the things a controller
+  should look at, so the floor is arguably correct — but it means the curve is
+  a step, not a slope, and we show it that way.
+- **`narration_pattern` has never been induced.** The generator deliberately
+  writes narrations that carry no batch id, so there is no pattern to find. The
+  rule type is implemented and tested but unused, which is the honest outcome
+  for data built to defeat it.
 - **One merchant profile, one fee schedule.** Batches are thematically
   consistent by design, which is what makes the structure learnable at all.
 - **No real bank file parsing.** No MT940, no CAMT.053, no per-bank narration

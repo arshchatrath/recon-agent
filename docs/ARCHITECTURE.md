@@ -67,6 +67,49 @@ The loop at the bottom is the whole idea: what the gate promotes in batch *n*
 is deterministic infrastructure in batch *n+1*, so the LLM is asked fewer
 questions every batch.
 
+## Rule discovery: learning what never raises an exception
+
+Some rule types can never be induced from the exception queue, because without
+the rule there is no question to ask. Settlement timing is the clean case:
+`explain_timing` returns None when no window has been learned, so no
+`TIMING_UNEXPLAINED` exception is ever raised, so nothing escalates, so a timing
+rule can never be proposed. Zero were, across every run — the same
+chicken-and-egg as the backtest deadlock, in a different place.
+
+So `run_discovery_leg` inverts the direction. For any instrument missing a
+discoverable rule type, it takes a few *independent* samples of records already
+resolved and asks what pattern they show. Independence matters: three proposals
+drawn from disjoint evidence are three real confirmations, which is exactly what
+the occurrence gate counts. It is bounded per batch and stops entirely once the
+rule is learned, so the cost falls to zero rather than becoming a permanent tax.
+
+Two things had to be excluded from the timing evidence, both for the same
+reason. A split payout's later legs settle a day or more after the first, so
+they make different samples observe different windows — (2,2) here, (2,3) there
+— and the proposals fragment across fingerprints instead of accumulating. They
+also contradict a correct window *in the backtest*. The base settlement rhythm
+is what is being asked about; a split payout is a separate phenomenon. Note the
+backtest reads split orders from the settlements table rather than the matches
+table, because history includes pairs confirmed by the bank leg that were never
+matched order-to-settlement — a match-based filter silently misses exactly the
+unmatched split legs that break the rule.
+
+## Split payouts
+
+A fee rule speaks to a full settlement, so a leg covering 40% of an order is
+`INAPPLICABLE` to it and the assignment solver correctly declines. That left
+every split payout as an exception and was the single largest cause of missed
+recall (about 5 points).
+
+The constraint that identifies a split is exact and needs no new rule type: the
+legs' **gross** amounts sum to the order's gross. That is a subset sum, and the
+solver was already in the repository. Summing over gross rather than net is what
+makes it safe — net carries fees and rounding drift, so an exact match on gross
+is a much stronger claim, and it is what stops an orphan that merely happens to
+be smaller than some order from being bound to it. Each leg must additionally be
+internally consistent with a learned fee schedule, checked leg-against-itself
+rather than leg-against-order.
+
 ## Why deterministic-first
 
 **Cost.** An LLM call per record does not survive contact with production
@@ -195,7 +238,7 @@ was never asked. That status column is ledger data, not ground truth.
 ## What is verified, and what is not
 
 The deterministic layers, the gate, the metrics and the storage are exercised
-by 327 tests and by full runs over five batches, with the proposal step driven
+by 347 tests and by full runs over five batches, with the proposal step driven
 by a test double.
 
 The proposal step has separately been run live (Gemini 3.1 Flash Lite, batch 1,

@@ -100,6 +100,15 @@ class BatchRun:
                 continue
         return None, "no active rule explains the deduction"
 
+    def explain_leg(self, settlement):
+        """Is this settlement row internally consistent with a learned fee
+        schedule -- its own net against its own gross? Used for split legs,
+        where there is no full order to compare against."""
+        for r in self.rules.of_type("fee_formula", settlement["instrument"]):
+            if evaluate(r.predicate, {}, settlement, self.rules) is True:
+                return r.rule_id, f"leg consistent with fee rule {r.rule_id}"
+        return None, "no fee rule explains this leg"
+
     def explain_timing(self, order, settlement):
         window = self.rules.expected_lag(settlement["instrument"])
         lag = working_days_between(_day(order["order_datetime"]),
@@ -136,6 +145,60 @@ class BatchRun:
                            rule_id=rule_id, confidence=0.99,
                            explanation=f"id match; {why}; lag {lag} working days")
         return left_o, left_s
+
+    def run_split_leg(self, orders, settlements):
+        """One order paid out across several settlements.
+
+        A fee rule speaks to a full settlement, so a leg covering 40% of an
+        order is INAPPLICABLE to it and the assignment solver correctly
+        declines -- which left every split payout as an exception and was the
+        single largest cause of missed recall.
+
+        The constraint that identifies a split is exact and needs no new rule:
+        the legs' GROSS amounts must sum to the order's gross. That is a subset
+        sum, and the solver is already here. Requiring an exact sum over gross
+        (not net, which carries fees and drift) is what keeps this from binding
+        an orphan that merely happens to be smaller than some order.
+
+        -> (leftover_orders, leftover_settlements)
+        """
+        by_claim: dict[str, list] = {}
+        for s in settlements:
+            by_claim.setdefault(s["order_id_claimed"], []).append(s)
+
+        used, matched_orders = set(), set()
+        for o in orders:
+            legs = by_claim.get(o["order_id"], [])
+            if len(legs) < 2:
+                continue
+            result = solve(int(o["gross_amount_paise"]),
+                           [(s["settlement_txn_id"], s["gross_amount_paise"])
+                            for s in legs], delta=0)
+            if not result.found or result.ambiguous:
+                continue                     # ambiguous means escalate, not guess
+            chosen = set(result.solutions[0])
+            if len(chosen) < 2:
+                continue
+            members = [s for s in legs if s["settlement_txn_id"] in chosen]
+            # Every leg must still be internally consistent with a learned fee
+            # schedule. Checked leg-against-itself, not leg-against-order: a
+            # fee rule is INAPPLICABLE to a partial leg by design, so asking
+            # explain_amount(order, leg) here would always say no and the whole
+            # split path would never fire.
+            if not all(self.explain_leg(s)[0] for s in members):
+                continue
+            for s in members:
+                self.match("order", o["order_id"], "settlement",
+                           s["settlement_txn_id"], "assignment", "subset_sum",
+                           confidence=0.95,
+                           explanation=f"split payout: {len(members)} legs whose "
+                                       f"gross sums exactly to "
+                                       f"{o['gross_amount_paise']}p")
+                used.add(s["settlement_txn_id"])
+            matched_orders.add(o["order_id"])
+
+        return ([o for o in orders if o["order_id"] not in matched_orders],
+                [s for s in settlements if s["settlement_txn_id"] not in used])
 
     def run_assignment_leg(self, orders, settlements):
         pairs = blocking.candidate_pairs(orders, settlements)
@@ -336,6 +399,108 @@ class BatchRun:
                     (f"{exc['reason_text']} | model: {v.residual_explanation}",
                      exc["exception_id"]))
 
+    # ------------------------------------------------------- rule discovery
+    DISCOVERABLE = ("timing_window", "refund_pattern")
+
+    def run_discovery_leg(self):
+        """Ask about dimensions that never produce an exception.
+
+        Some rule types can never be induced from the exception queue, because
+        without the rule there is no question. Settlement timing is the clean
+        example: `explain_timing` returns None when no window has been learned,
+        so no TIMING_UNEXPLAINED exception is ever raised, so nothing escalates,
+        so a timing rule can never be proposed. Zero were, across every run --
+        the same chicken-and-egg as the backtest deadlock, in a different
+        place.
+
+        So for any instrument missing a discoverable rule type, take a few
+        independent samples of records we HAVE resolved and ask what pattern
+        they show. Independent samples matter: three proposals drawn from
+        disjoint evidence are three real confirmations, which is exactly what
+        the occurrence gate is counting. Bounded per batch, and it stops
+        entirely once the rule is learned.
+        """
+        if not self.use_llm or self.reasoner is None:
+            return
+        cfg = load().get("discovery", {})
+        n_samples = cfg.get("samples_per_batch", 3)
+        n_examples = cfg.get("examples_per_sample", 5)
+
+        for rule_type in self.DISCOVERABLE:
+            for instrument in self.instruments_seen():
+                if self.rules.of_type(rule_type, instrument):
+                    continue                     # already known; ask nothing
+                pool = self.discovery_pool(rule_type, instrument)
+                if len(pool) < n_examples:
+                    continue
+                min_examples = cfg.get("min_examples_per_sample", 3)
+                for i in range(n_samples):
+                    sample = pool[i * n_examples:(i + 1) * n_examples]
+                    if len(sample) < min_examples:
+                        break            # a short tail is fine; a stub is not
+                    v = self.reasoner.resolve(self.discovery_case(
+                        rule_type, instrument, sample))
+                    self.counts["discovery_cases"] += 1
+                    if v.error:
+                        return                   # service is gone; stop asking
+                    if v.proposed_rule is not None:
+                        self.proposals.append({
+                            "predicate": v.proposed_rule,
+                            "confidence": v.confidence,
+                            "case_id": f"discovery:{rule_type}:{instrument}:{i}",
+                            "reasoning": v.reasoning})
+
+    def instruments_seen(self):
+        return [r["instrument"] for r in self.conn.execute(
+            "SELECT DISTINCT instrument FROM settlements WHERE batch_id=?"
+            " ORDER BY instrument", (self.batch_id,))]
+
+    def discovery_pool(self, rule_type, instrument):
+        """Resolved records this rule type could plausibly describe."""
+        if rule_type == "timing_window":
+            # Only orders settled in ONE payout. A split's later legs settle a
+            # day or more after the first, so including them makes different
+            # samples observe different windows -- (2,2) here, (2,3) there --
+            # and the proposals fragment across fingerprints instead of
+            # accumulating. The base settlement rhythm is what is being asked
+            # about; a split payout is a separate phenomenon.
+            sql = ("SELECT o.order_id, o.order_datetime, o.gross_amount_paise,"
+                   " s.settlement_txn_id, s.settled_datetime, s.net_amount_paise"
+                   " FROM matches m"
+                   " JOIN orders o ON o.order_id = m.left_id"
+                   " JOIN settlements s ON s.settlement_txn_id = m.right_id"
+                   " WHERE m.batch_id=? AND m.left_type='order'"
+                   " AND m.right_type='settlement' AND s.instrument=?"
+                   " AND o.status='captured'"
+                   " AND o.order_id IN (SELECT left_id FROM matches"
+                   "   WHERE batch_id=m.batch_id AND left_type='order'"
+                   "   AND right_type='settlement'"
+                   "   GROUP BY left_id HAVING COUNT(*) = 1)")
+        else:   # refund_pattern -- the ledger says these were partly refunded
+            sql = ("SELECT o.order_id, o.order_datetime, o.gross_amount_paise,"
+                   " o.status, s.settlement_txn_id, s.settled_datetime,"
+                   " s.net_amount_paise FROM settlements s"
+                   " JOIN orders o ON o.order_id = s.order_id_claimed"
+                   " WHERE s.batch_id=? AND s.instrument=?"
+                   " AND o.status='refunded_partial'")
+        return [dict(r) for r in self.conn.execute(sql, (self.batch_id, instrument))]
+
+    def discovery_case(self, rule_type, instrument, sample) -> dict:
+        examples = []
+        for r in sample:
+            e = dict(r)
+            e["working_day_lag"] = working_days_between(
+                _day(r["order_datetime"]), _day(r["settled_datetime"]))
+            if self.rules.expected_net(r["gross_amount_paise"], instrument) is not None:
+                e["expected_net_under_learned_fee_rule"] = self.rules.expected_net(
+                    r["gross_amount_paise"], instrument)
+            examples.append(e)
+        return {"record": {"instrument": instrument},
+                "focus": rule_type,
+                "reason_code": f"{rule_type.upper()}_NOT_YET_LEARNED",
+                "resolved_examples": examples,
+                "candidates": []}
+
     def build_case(self, exc) -> dict:
         table, key = {
             "settlement": ("settlements", "settlement_txn_id"),
@@ -373,10 +538,15 @@ class BatchRun:
         settlements = _rows(self.conn, "settlements", self.batch_id)
         credits = _rows(self.conn, "bank_credits", self.batch_id)
 
-        left_o, left_s = self.run_identity_leg(orders, settlements)
+        # Splits first: a multi-leg order would otherwise be picked up by the
+        # identity hash join and filed as FEE_UNEXPLAINED, because no fee rule
+        # explains a partial leg against the full order gross.
+        left_o, left_s = self.run_split_leg(orders, settlements)
+        left_o, left_s = self.run_identity_leg(left_o, left_s)
         dist = self.run_assignment_leg(left_o, left_s)
         self.run_bank_leg(settlements, credits)
         self.run_llm_leg()
+        self.run_discovery_leg()
         self.update_rule_stats()
         self.rule_changes = process_proposals(self.conn, self.batch_id,
                                               self.proposals)

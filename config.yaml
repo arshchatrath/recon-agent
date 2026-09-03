@@ -60,6 +60,13 @@ llm:
   # paying full backoff on every remaining case.
   give_up_after_failures: 3
 
+# Rule types that never surface as an exception have to be asked about
+# directly, or they can never be learned at all. See BatchRun.run_discovery_leg.
+discovery:
+  samples_per_batch: 3       # independent samples -> independent confirmations
+  examples_per_sample: 5
+  min_examples_per_sample: 3
+
 rule_engine:
   min_occurrences: 3
   confidence_floor: 0.8
@@ -72,6 +79,12 @@ rule_engine:
   # Proposals differing only in tolerance are the same hypothesis and are
   # merged, keeping the widest allowance up to this cap.
   max_tolerance_paise: 10
+  # A contradiction smaller than this is rounding drift in the data, not a
+  # wrong rule. Bigger than this and the rule is genuinely wrong, whatever its
+  # precision looks like. Keep it small -- this is the one place where the
+  # zero-tolerance stance is relaxed, and it must stay a noise band, not a
+  # loophole.
+  noise_band_paise: 5
   retirement_floor: 0.95
   retirement_min_applications: 10
 

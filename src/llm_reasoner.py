@@ -95,6 +95,13 @@ Hard requirements:
   wrong rate fit, because a wide tolerance that overlaps another rule is \
   rejected too.
 
+Some requests carry a "focus" field and a list of "resolved_examples" instead
+of an unmatched record. Those are not asking you to match anything -- the
+records are already reconciled. They are asking: looking at these examples,
+what rule of the focused type describes them? Answer with verdict
+"no_match" (there is no match question) and put your answer in proposed_rule.
+If the examples show no consistent pattern, propose nothing and say why.
+
 Rule predicate forms you may propose, and nothing else:
   fee_formula      params {"rate": <0..1>, "gst": <0..1>}
                    or {"flat_paise": <int>, "gst": <0..1>}

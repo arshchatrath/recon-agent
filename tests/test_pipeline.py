@@ -140,3 +140,65 @@ def test_the_pipeline_never_reads_ground_truth(conn):
     import src.pipeline as p
     assert "truth" not in open(p.__file__, encoding="utf-8").read().replace(
         "ground truth", "")
+
+
+# ----------------------------------------------------------- split payouts
+def test_split_payouts_are_matched_once_the_fee_rules_are_known(conn):
+    """A leg covering 40% of an order is INAPPLICABLE to a fee rule, so the
+    assignment solver declines it and every split used to become an exception
+    -- the single largest cause of missed recall. The legs' GROSS amounts sum
+    to the order's gross exactly, which is a subset sum and needs no new rule."""
+    seed_true_rules(conn)
+    run_batch(conn, "1")
+    splits = conn.execute("SELECT * FROM matches WHERE explanation LIKE"
+                          " 'split payout%'").fetchall()
+    assert splits, "split payouts must be matched"
+    # every split match binds one order to more than one settlement
+    by_order = {}
+    for m in splits:
+        by_order.setdefault(m["left_id"], []).append(m["right_id"])
+    assert all(len(v) >= 2 for v in by_order.values())
+
+
+def test_split_matching_requires_an_exact_gross_sum(conn):
+    """Inexactness is what would let an orphan that happens to be smaller than
+    some order get bound to it."""
+    seed_true_rules(conn)
+    run_batch(conn, "1")
+    for m in conn.execute("SELECT * FROM matches WHERE explanation LIKE"
+                          " 'split payout%'").fetchall():
+        order_gross = conn.execute(
+            "SELECT gross_amount_paise g FROM orders WHERE order_id=?",
+            (m["left_id"],)).fetchone()["g"]
+        legs = conn.execute(
+            "SELECT SUM(gross_amount_paise) s FROM settlements WHERE"
+            " settlement_txn_id IN (SELECT right_id FROM matches WHERE"
+            " batch_id=? AND left_id=? AND explanation LIKE 'split payout%')",
+            (m["batch_id"], m["left_id"])).fetchone()["s"]
+        assert legs == order_gross
+
+
+def test_a_chargeback_reversal_is_not_mistaken_for_a_split(conn):
+    """A reversal also claims its order id, but gross + (-gross) != gross."""
+    seed_true_rules(conn)
+    run_batch(conn, "1")
+    for m in conn.execute("SELECT * FROM matches WHERE explanation LIKE"
+                          " 'split payout%'").fetchall():
+        assert not m["right_id"].startswith("CB-")
+
+
+def test_splits_are_not_matched_before_the_fee_rules_are_learned(conn):
+    """Each leg still has to be internally consistent with a learned fee
+    schedule, so batch 1 with an empty library matches no splits."""
+    run_batch(conn, "1")
+    assert conn.execute("SELECT COUNT(*) c FROM matches WHERE explanation LIKE"
+                        " 'split payout%'").fetchone()["c"] == 0
+
+
+def test_splits_lift_recall_without_costing_precision(conn):
+    from src.metrics import score_batch
+    seed_true_rules(conn)
+    run_batch(conn, "1")
+    s = score_batch(conn, "1")
+    assert s["precision"] == 1.0, s["false_positives"]
+    assert s["false_positive_count"] == 0

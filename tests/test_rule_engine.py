@@ -5,7 +5,7 @@ import json
 import pytest
 
 from src.db import ingest_batch, reset_db
-from src.deterministic import ALL, RuleSet
+from src.deterministic import ALL, RuleSet, backtest
 from src.generate_data import DEFAULT_LAG, GST_RATE, LAG_WORKING_DAYS, MDR
 from src.llm_reasoner import LLMVerdict
 from src.pipeline import BatchRun
@@ -379,3 +379,51 @@ def test_different_formulas_still_stay_separate(conn):
     intake(conn, "1", fee(instrument="UPI", rate=0.03), 0.9)
     conn.commit()
     assert conn.execute("SELECT COUNT(*) c FROM rule_proposals").fetchone()["c"] == 2
+
+
+# ------------------------------------------- noise in the data vs a wrong rule
+def test_a_correct_rule_contradicted_only_by_rounding_drift_is_promoted(conn):
+    """Both look like a contradicted record. Counting them the same rejected
+    four correct fee formulas that a live model had induced, each missed by a
+    paise or two on one drifted row."""
+    ingest_batch(conn, "1")
+    seed_matches(conn, "CARD_DEBIT", limit=12, clean_only=False)
+    strict = dict(true_fee("CARD_DEBIT"), tolerance_paise=0)
+    bt = backtest(conn, strict)
+    assert bt["wrong_matches"] > 0, "this test needs a drifted row to be real"
+    assert bt["max_deviation_paise"] <= 5
+
+    propose(conn, strict, times=3, confidence=0.95)
+    out = review_pending(conn)
+    assert len(out["promoted"]) == 1, "drift must not block a correct rule"
+    detail = json.loads(conn.execute(
+        "SELECT detail_json FROM rule_audit WHERE event='promoted'"
+        " ORDER BY audit_id DESC").fetchone()["detail_json"])
+    assert detail["gates"]["backtest"]["contradictions_within_noise"] is True
+
+
+def test_a_wrong_rate_is_still_rejected_however_small_its_error_count(conn):
+    """The escape hatch must be a noise band, not a loophole."""
+    ingest_batch(conn, "1")
+    seed_matches(conn, "UPI", limit=12, clean_only=False)
+    wrong = {"type": "fee_formula", "instrument": "UPI",
+             "params": {"rate": 0.025, "gst": 0.18}, "tolerance_paise": 0}
+    bt = backtest(conn, wrong)
+    assert bt["max_deviation_paise"] > 1000, "a wrong rate misses by a lot"
+    propose(conn, wrong, times=5, confidence=0.99)
+    out = review_pending(conn)
+    assert out["promoted"] == []
+    detail = json.loads(conn.execute(
+        "SELECT detail_json FROM rule_audit WHERE event='rejected'"
+        " ORDER BY audit_id DESC").fetchone()["detail_json"])
+    assert detail["gates"]["backtest"]["contradictions_within_noise"] is False
+
+
+def test_the_backtest_reports_how_wrong_not_merely_that_it_is_wrong(conn):
+    ingest_batch(conn, "1")
+    seed_matches(conn, "UPI", limit=10, clean_only=False)
+    bt = backtest(conn, {"type": "fee_formula", "instrument": "UPI",
+                         "params": {"rate": 0.05, "gst": 0.18},
+                         "tolerance_paise": 0})
+    assert bt["max_deviation_paise"] is not None
+    assert all("deviation_paise" in c for c in bt["counterexamples"])

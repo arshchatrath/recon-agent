@@ -196,9 +196,20 @@ def evaluate(pred: dict, left, right, rules: "RuleSet | None" = None):
         # "the shortfall is a refund, not a mismatch" -- needs a fee rule to
         # know what the net should have been, so it is inapplicable until one
         # has been learned.
+        #
+        # It ALSO requires the merchant's own ledger to say the order was
+        # partly refunded. Without that condition the rule reads "any net below
+        # expectation is a refund", which would explain away every genuine
+        # mismatch in the batch -- a false-positive engine wearing a rule's
+        # clothing. The status column is ledger data, not ground truth.
         gross, net = _d(right, "gross_amount_paise"), _d(right, "net_amount_paise")
         if gross is None or net is None or rules is None:
             return INAPPLICABLE
+        status = _d(left, "status")
+        if status is None:
+            return INAPPLICABLE
+        if status != "refunded_partial":
+            return False
         expected = rules.expected_net(gross, instr)
         if expected is None:
             return INAPPLICABLE
@@ -407,14 +418,31 @@ def backtest(conn, predicate, exclude_batch=None) -> dict:
         sql = f"SELECT * FROM ({sql}) WHERE batch_id <> ?"
         params.append(exclude_batch)
 
+    # Orders paid out across several settlements. A split's later legs settle a
+    # day or more after the first, so judging a base-settlement-rhythm rule on
+    # them counts a correct rule wrong -- the same reason refunded orders are
+    # skipped below. A fee rule is already INAPPLICABLE to a partial leg, so
+    # this only affects timing.
+    # Read this from the settlements data, not from the matches table. History
+    # includes pairs confirmed by the BANK leg that were never matched
+    # order-to-settlement, so a match-based filter silently misses exactly the
+    # unmatched split legs that contradict the rule. This also covers an order
+    # carrying a chargeback reversal, which is a second settlement row too.
+    split_orders = {r[0] for r in conn.execute(
+        "SELECT order_id_claimed FROM settlements"
+        " GROUP BY order_id_claimed, batch_id HAVING COUNT(*) > 1")}
+
     correct = wrong = skipped = 0
-    examples = []
+    examples, deviations = [], []
     for m in conn.execute(sql, params).fetchall():
         o = conn.execute("SELECT * FROM orders WHERE order_id=?",
                          (m["order_id"],)).fetchone()
         s = conn.execute("SELECT * FROM settlements WHERE settlement_txn_id=?",
                          (m["settlement_txn_id"],)).fetchone()
         if o is None or s is None:
+            continue
+        if o["order_id"] in split_orders:
+            skipped += 1
             continue
         if o["status"] != "captured":
             # The merchant's own ledger says this order was refunded, so a
@@ -431,14 +459,30 @@ def backtest(conn, predicate, exclude_batch=None) -> dict:
             correct += 1
         else:
             wrong += 1
+            # Record the SIZE of the disagreement, not just its existence. A
+            # correct rule contradicted by rounding drift misses by a paise or
+            # two; a wrong rate misses by thousands. The gate cannot tell those
+            # apart without this number, and it must.
+            deviation = None
+            if predicate.get("type") == "fee_formula":
+                try:
+                    deviation = abs(int(s["net_amount_paise"])
+                                    - fee_expected_net(int(o["gross_amount_paise"]),
+                                                       predicate["params"]))
+                except (KeyError, TypeError, ValueError):
+                    deviation = None
+            deviations.append(deviation)
             if len(examples) < 5:
                 examples.append({"order_id": o["order_id"],
                                  "settlement_txn_id": s["settlement_txn_id"],
                                  "gross_amount_paise": s["gross_amount_paise"],
-                                 "net_amount_paise": s["net_amount_paise"]})
+                                 "net_amount_paise": s["net_amount_paise"],
+                                 "deviation_paise": deviation})
 
     support = correct + wrong
+    known = [d for d in deviations if d is not None]
     return {"correct_matches": correct, "wrong_matches": wrong,
             "skipped": skipped, "support": support,
             "precision": (correct / support) if support else 0.0,
+            "max_deviation_paise": max(known) if known else None,
             "counterexamples": examples}
