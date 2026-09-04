@@ -188,3 +188,17 @@ def test_timing_and_fees_together_answer_the_demo_question(conn):
             "SELECT predicate_json FROM rules WHERE status='active'"))
     assert "GST" in rendered, "fee schedule missing"
     assert "working day" in rendered, "settlement timing missing"
+
+
+def test_timing_rules_accrue_usage_so_retirement_can_judge_them(conn):
+    """A match records the FEE rule as its rule_id, so timing windows used to
+    sit at times_applied=0 forever -- and a rule that cannot be judged cannot
+    be withdrawn. They are now credited when they participate in a match."""
+    run(conn)
+    timing = conn.execute(
+        "SELECT * FROM rules WHERE rule_type='timing_window'"
+        " AND status='active'").fetchall()
+    assert timing, "nothing learned, so this proves nothing"
+    for r in timing:
+        assert r["times_applied"] > 0, dict(r)
+        assert r["times_correct"] <= r["times_applied"]

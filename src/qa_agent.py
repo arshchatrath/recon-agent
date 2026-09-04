@@ -88,6 +88,14 @@ TOOLS = [
      "input_schema": {"type": "object",
                       "properties": {"utr": {"type": "string"}},
                       "required": ["utr"]}},
+    {"name": "check_contract_compliance",
+     "description": "Audit the fees actually deducted against the merchant's "
+                    "contracted rates. Returns per-instrument agreement, total "
+                    "fee leakage in rupees, and the worst individual "
+                    "transactions. Use this for any question about being "
+                    "overcharged, fee correctness, or money leaking.",
+     "input_schema": {"type": "object",
+                      "properties": {"batch_id": {"type": "string"}}}},
     {"name": "get_batch_metrics",
      "description": "Run metrics for one batch, or the learning curve across "
                     "all batches if batch_id is omitted.",
@@ -274,6 +282,31 @@ class SettlementQA:
                 "reconciles_exactly": total == credit["credit_amount_paise"],
                 "how_it_was_resolved": members[0]["explanation"] if members
                 else "not yet disaggregated"}
+
+    def check_contract_compliance(self, batch_id=None) -> dict:
+        """Contracted rates vs what was actually deducted."""
+        from src.contract import compare_to_contract, leakage_report
+        rows = compare_to_contract(self.conn, batch_id)
+        lk = leakage_report(self.conn, batch_id)
+        return {
+            "batch_id": batch_id or "all batches",
+            "per_instrument": [
+                {"instrument": r["instrument"], "contracted": r["contracted"],
+                 "observed_in_data": r.get("observed", "no data"),
+                 "transactions": r["samples"],
+                 "matches_contract": r["agrees"]} for r in rows],
+            "instruments_deviating": [r["instrument"] for r in rows
+                                      if r["agrees"] is False],
+            "total_fee_leakage": lk["total_leaked"],
+            "total_fee_leakage_paise": lk["total_leaked_paise"],
+            "transactions_overcharged": lk["transactions_overcharged"],
+            "transactions_audited": lk["transactions_checked"],
+            "worst_transactions": [
+                {**w, "charged": _money(w["charged_paise"])["formatted"],
+                 "agreed": _money(w["agreed_paise"])["formatted"],
+                 "over_by": _money(w["leaked_paise"])["formatted"]}
+                for w in lk["worst_offenders"][:5]],
+        }
 
     def get_batch_metrics(self, batch_id=None) -> dict:
         from src.metrics import learning_curve, score_batch

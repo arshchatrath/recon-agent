@@ -143,5 +143,9 @@ CREATE TABLE IF NOT EXISTS run_metrics (
     cost_weighted_error  REAL,
     wall_clock_seconds   REAL,
     active_rules_count   INTEGER,
-    component_sizes_json TEXT
+    component_sizes_json TEXT,
+    -- contract compliance: what was taken beyond what was agreed
+    fee_leakage_paise    INTEGER,
+    transactions_overcharged INTEGER,
+    contract_deviations  INTEGER
 );

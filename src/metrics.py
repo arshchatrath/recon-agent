@@ -127,6 +127,10 @@ def score_batch(conn, batch_id: str) -> dict:
         "wall_clock_seconds": round(run["wall_clock_seconds"], 3) if run else 0.0,
         "component_sizes": json.loads(run["component_sizes_json"] or "{}")
         if run else {},
+        "fee_leakage_paise": (run["fee_leakage_paise"] or 0) if run else 0,
+        "transactions_overcharged": (run["transactions_overcharged"] or 0)
+        if run else 0,
+        "contract_deviations": (run["contract_deviations"] or 0) if run else 0,
     }
 
 
@@ -181,7 +185,8 @@ def learning_curve(conn, batches=None) -> list[dict]:
             "batch_id", "open_exceptions", "llm_calls",
             "llm_calls_per_100_records", "llm_calls_avoided", "match_rate",
             "precision", "recall", "false_positive_count", "active_rules",
-            "cost_weighted_error", "money_at_risk_paise")})
+            "cost_weighted_error", "money_at_risk_paise",
+            "fee_leakage_paise", "contract_deviations")})
     return out
 
 
@@ -227,6 +232,9 @@ def report(conn, batches=None) -> str:
                   f"  FALSE POSITIVES {s['false_positive_count']} "
                   f"({format_paise(s['false_positive_money_paise'])})",
                   f"  money at risk {format_paise(s['money_at_risk_paise'])}",
+                  f"  fee leakage {format_paise(s['fee_leakage_paise'])}"
+                  f"   ({s['transactions_overcharged']} txns overcharged,"
+                  f" {s['contract_deviations']} instruments deviating)",
                   f"  cost-weighted error {s['cost_weighted_error']:.0f}"
                   f"  (FP:exception = "
                   f"{load()['metrics']['fp_cost_weight']}:1)",

@@ -24,6 +24,7 @@ from src import blocking
 from src.assignment import solve_component
 from src.calendar_utils import working_days_between
 from src.config import load
+from src.contract import compare_to_contract, leakage_report
 from src.db import get_conn, ingest_batch, init_db, reset_db
 from src.deterministic import ALL, INAPPLICABLE, RuleSet, evaluate
 from src.llm_reasoner import LLMReasoner
@@ -61,6 +62,8 @@ class BatchRun:
         self.proposals: list[dict] = []
         self.rule_changes = {"promoted": [], "rejected": [], "pending": [],
                              "retired": []}
+        self.supporting: list[int] = []      # rules that helped but were not
+                                             # recorded as a match's rule_id
 
     # -------------------------------------------------------------- writes
     def match(self, left_type, left_id, right_type, right_id, kind, by,
@@ -144,6 +147,11 @@ class BatchRun:
                            s["settlement_txn_id"], "exact", "deterministic",
                            rule_id=rule_id, confidence=0.99,
                            explanation=f"id match; {why}; lag {lag} working days")
+                # A match records the FEE rule as its rule_id, but the timing
+                # window was checked too. Credit it, or it never accrues
+                # times_applied and the retirement gate can never judge it --
+                # a rule that cannot be judged cannot be withdrawn.
+                self.credit_supporting_rules(s["instrument"], "timing_window")
         return left_o, left_s
 
     def run_split_leg(self, orders, settlements):
@@ -311,6 +319,11 @@ class BatchRun:
                        explanation=f"{why}; {len(chosen)} settlements sum to "
                                    f"{amount}p")
 
+    def credit_supporting_rules(self, instrument, rule_type):
+        """Record that a non-primary rule also participated in a match."""
+        for r in self.rules.of_type(rule_type, instrument):
+            self.supporting.append(r.rule_id)
+
     def update_rule_stats(self):
         """Score each rule that fired this batch, for the retirement gate.
 
@@ -339,6 +352,10 @@ class BatchRun:
             " GROUP BY left_id HAVING COUNT(DISTINCT right_id) > ?",
             (self.batch_id, max_bindings))}
 
+        for rule_id in self.supporting:
+            self.conn.execute(
+                "UPDATE rules SET times_applied = times_applied + 1,"
+                " times_correct = times_correct + 1 WHERE rule_id = ?", (rule_id,))
         for m in self.conn.execute(
                 "SELECT rule_id, left_id, right_id FROM matches WHERE batch_id=?"
                 " AND rule_id IS NOT NULL", (self.batch_id,)).fetchall():
@@ -559,6 +576,17 @@ class BatchRun:
         self.rule_changes = process_proposals(self.conn, self.batch_id,
                                               self.proposals)
 
+        # Contract compliance runs every batch, not on request. A silent
+        # overcharge is exactly the thing nobody thinks to go and look for.
+        leak = leakage_report(self.conn, self.batch_id)
+        deviations = sum(1 for r in compare_to_contract(self.conn, self.batch_id)
+                         if r["agrees"] is False)
+        self.leakage = leak
+        if leak["total_leaked_paise"] > 0:
+            log.warning("batch %s: %s charged above contracted rates across "
+                        "%d transactions", self.batch_id, leak["total_leaked"],
+                        leak["transactions_overcharged"])
+
         total = len(orders) + len(settlements) + len(credits)
         matched_records = len(self.matched_orders) + len(self.matched_settlements)
         at_risk = self.conn.execute(
@@ -570,8 +598,9 @@ class BatchRun:
             "rule_matches,assignment_matches,subset_sum_matches,llm_resolved,"
             "exceptions_count,llm_calls,llm_calls_avoided,llm_tokens_in,"
             "llm_tokens_out,match_rate,money_at_risk_paise,"
-            "wall_clock_seconds,active_rules_count,component_sizes_json)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "wall_clock_seconds,active_rules_count,component_sizes_json,"
+            "fee_leakage_paise,transactions_overcharged,contract_deviations)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (self.batch_id, total, self.counts["exact"], self.counts["rule"],
              self.counts["assignment"], self.counts["subset_sum"],
              self.counts["llm_resolved"], self.counts["exceptions"],
@@ -579,9 +608,13 @@ class BatchRun:
              r.calls_avoided if r else 0, r.tokens_in if r else 0,
              r.tokens_out if r else 0,
              matched_records / total if total else 0,
-             at_risk, time.time() - t0, len(self.rules), json.dumps(dist)))
+             at_risk, time.time() - t0, len(self.rules), json.dumps(dist),
+             leak["total_leaked_paise"], leak["transactions_overcharged"],
+             deviations))
         self.conn.commit()
         return dict(self.counts, total_records=total,
+                    fee_leakage_paise=leak["total_leaked_paise"],
+                    contract_deviations=deviations,
                     rules_promoted=len(self.rule_changes["promoted"]),
                     rules_rejected=len(self.rule_changes["rejected"]),
                     match_rate=round(matched_records / total, 3) if total else 0,

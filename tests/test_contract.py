@@ -149,3 +149,47 @@ def test_render_is_quiet_when_everything_agrees(honest):
     text = render(honest)
     assert "DEVIATES FROM CONTRACT" not in text
     assert "matches contract" in text
+
+
+# ----------------------------------------------- integrated into every run
+def test_the_audit_runs_on_every_batch_not_on_request(tmp_path):
+    """A silent overcharge is exactly the thing nobody thinks to go and look
+    for, so it cannot be an opt-in report."""
+    from src.pipeline import BatchRun
+    c = reset_db(tmp_path / "r.db")
+    ingest_batch(c, "5")
+    summary = BatchRun(c, "5", use_llm=False).run()
+    assert summary["fee_leakage_paise"] > 0
+    assert summary["contract_deviations"] == 3
+
+    row = c.execute("SELECT * FROM run_metrics WHERE batch_id='5'").fetchone()
+    assert row["fee_leakage_paise"] == summary["fee_leakage_paise"]
+    assert row["transactions_overcharged"] > 0
+    c.close()
+
+
+def test_an_honest_batch_records_zero_leakage(tmp_path):
+    from src.pipeline import BatchRun
+    c = reset_db(tmp_path / "h2.db")
+    ingest_batch(c, "4")
+    summary = BatchRun(c, "4", use_llm=False).run()
+    assert summary["fee_leakage_paise"] == 0
+    assert summary["contract_deviations"] == 0
+    c.close()
+
+
+def test_the_qa_agent_can_answer_am_i_being_overcharged(tmp_path):
+    """The demo question. It has to be answerable from a tool, not from prose."""
+    from src.pipeline import BatchRun
+    from src.qa_agent import TOOLS, SettlementQA
+    c = reset_db(tmp_path / "q.db")
+    ingest_batch(c, "5")
+    BatchRun(c, "5", use_llm=False).run()
+
+    assert any(t["name"] == "check_contract_compliance" for t in TOOLS)
+    out = SettlementQA(conn=c, client=object()).check_contract_compliance("5")
+    assert set(out["instruments_deviating"]) == {"CARD_DEBIT", "CARD_CREDIT",
+                                                 "NETBANKING"}
+    assert out["total_fee_leakage_paise"] > 0
+    assert out["worst_transactions"][0]["over_by"].startswith("₹")
+    c.close()

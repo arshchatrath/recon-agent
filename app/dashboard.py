@@ -99,6 +99,13 @@ st.dataframe(pd.DataFrame([{
                 else "DEVIATES FROM CONTRACT")} for r in rows]),
     use_container_width=True, hide_index=True)
 
+# when did this start? a single batch cannot answer that
+if not curve.empty and curve["fee_leakage_paise"].abs().sum() > 0:
+    st.subheader("Fee leakage over time")
+    st.caption("A rate change shows up here as a step, which is the question a "
+               "controller actually asks: *when did this start?*")
+    st.bar_chart(curve.set_index("batch_id")[["fee_leakage_paise"]], height=200)
+
 if lk["total_leaked_paise"] > 0:
     st.error(f"**{lk['total_leaked']} charged above the contracted rates** "
              f"across {lk['transactions_overcharged']} transactions.")

@@ -490,10 +490,6 @@ several JSON Schema keywords (so tool schemas are filtered).
   writes narrations carrying no batch id, so there is no pattern to find. The
   rule type is implemented and tested but unused — the honest outcome for data
   built to defeat it.
-- **Timing rules never accrue `times_applied`.** A match records the *fee* rule
-  as its `rule_id`; the timing window is a secondary check. So the retirement
-  gate can never evaluate a timing rule. Retirement is tested and correct, but
-  it does not currently cover that rule type.
 - **Retirement has never fired live**, because no promoted rule has degraded.
   That is the desired state, not a gap, but it means the rollback path is
   exercised only by tests.
@@ -511,9 +507,8 @@ several JSON Schema keywords (so tool schemas are filtered).
    a live result rather than a stub-driven one. Needs a Google project with
    roughly 2,000 requests of headroom, or an Anthropic key.
 2. **The pitch video.**
-3. **Timing rules in the retirement gate** — currently unreachable, per above.
-4. **The noise band is a heuristic.** Five paise separates drift from wrongness
+3. **The noise band is a heuristic.** Five paise separates drift from wrongness
    cleanly on this data. A principled version would estimate the drift
    distribution rather than take a constant.
-5. **Discovery covers two rule types.** `narration_pattern` would need data that
+4. **Discovery covers two rule types.** `narration_pattern` would need data that
    actually contains a pattern.
