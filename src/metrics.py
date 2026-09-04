@@ -252,9 +252,18 @@ def main(argv=None):
     p.add_argument("--batch", action="append",
                    help="restrict to these batches (repeatable)")
     p.add_argument("--json", action="store_true")
+    p.add_argument("--contract", action="store_true",
+                   help="audit settlement fees against the contracted rates")
     a = p.parse_args(argv)
 
     conn = get_conn()
+    if a.contract:
+        from src.contract import render
+        for b in (a.batch or [r["batch_id"] for r in conn.execute(
+                "SELECT DISTINCT batch_id FROM run_metrics ORDER BY batch_id")]):
+            print(f"\n### batch {b}\n")
+            print(render(conn, b))
+        return
     batches = a.batch or [r["batch_id"] for r in conn.execute(
         "SELECT DISTINCT batch_id FROM run_metrics ORDER BY batch_id")]
     for b in batches:

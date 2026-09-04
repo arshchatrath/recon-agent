@@ -39,8 +39,21 @@ wherever they do not.
 
 ## 2. The idea
 
-**The system is not told the fee structure or the settlement timing. It induces
-them from the data.**
+**It proves you were charged what you agreed to.** The merchant's contracted
+rates are an input; the settlement data is what is under audit. Every fee
+deducted is compared against what the contract allows, and the difference is
+reported in rupees against named transactions.
+
+> **An earlier version had this backwards** and induced the fee schedule from
+> settlement data. If the aggregator silently bills 2.1% against a contracted
+> 2.0%, such a system learns 2.1%, finds it consistent, and marks every
+> overcharged transaction correct — laundering the leakage while reporting 100%
+> precision. Two independent reviewers identified this, and a fifteen-line
+> statistical baseline (`observed_schedule()`) showed the induction was
+> redundant as well as misdirected. The direction was inverted; see
+> `ASK.md` for the reviews.
+
+The induction machinery is retained for what it actually demonstrates:
 
 The deterministic layer starts with exactly one rule — *a settlement claiming an
 order id matches that order*. It knows nothing about MDR, GST or settlement lag.
@@ -85,7 +98,23 @@ positives.
      2     19    20     15.3       10   80.2%  100.0%   92.3%    0      5     19
      3     14     5      3.9       12   84.4%  100.0%   98.2%    0      8     14
      4     12     1      0.8       11   85.6%  100.0%   99.2%    0      9     12
+     5     33    24     17.9        9   73.1%  100.0%   80.8%    0      9     33
    adv      5     5     10.0        0   76.0%  100.0%   79.5%    0      9      5
+```
+
+**Batch 5 is the month the aggregator quietly raised its rates.** Exceptions
+jump back to 33 and model calls to 24, because the learned rules stop
+explaining the data. The system does not adapt to the new rates — it notices,
+refuses, and escalates. The contract audit then prices exactly what changed:
+
+```
+instrument        contracted      observed     n  verdict
+UPI                       0%            0%    26  matches contract
+CARD_DEBIT              0.9%         0.95%     5  >>> DEVIATES FROM CONTRACT
+CARD_CREDIT               2%          2.1%     9  >>> DEVIATES FROM CONTRACT
+NETBANKING        flat 1200p    flat 1300p     3  >>> DEVIATES FROM CONTRACT
+
+Fee leakage across 43 transactions:  ₹399.33  (17 transactions overcharged)
 ```
 
 | | batch 1 | batch 4 |

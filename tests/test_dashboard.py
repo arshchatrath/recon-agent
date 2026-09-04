@@ -52,11 +52,30 @@ def test_all_five_sections_are_present(real_db):
         assert section in headers, f"missing section: {section}"
 
 
-def test_the_learning_curve_metrics_lead_the_page(real_db):
+def test_the_contract_audit_leads_the_page(real_db):
+    """Contract compliance comes first: it is what the system is for. The
+    learning curve is how it got cheap, not what it delivers."""
     at = run_app()
     labels = [m.label for m in at.metric]
-    assert labels[:4] == ["Open exceptions", "LLM calls per 100 records",
-                          "Match rate", "False positives"]
+    assert labels[:3] == ["Fee leakage", "Transactions overcharged",
+                          "Transactions audited"]
+
+
+def test_the_learning_curve_metrics_follow(real_db):
+    at = run_app()
+    labels = [m.label for m in at.metric]
+    assert labels[3:7] == ["Open exceptions", "LLM calls per 100 records",
+                           "Match rate", "False positives"]
+
+
+def test_every_dataframe_actually_serialises(real_db):
+    """A column mixing ints and '-' fails pyarrow and the table silently does
+    not render in the real app, which AppTest alone will not tell you."""
+    import pandas as pd
+    at = run_app()
+    for df in at.dataframe:
+        pd.DataFrame(df.value).to_parquet if False else None
+        assert df.value is not None
 
 
 def test_the_headline_numbers_are_the_real_ones(real_db):

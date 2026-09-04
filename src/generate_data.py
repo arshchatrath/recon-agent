@@ -42,9 +42,15 @@ EXCLUSIVE_CASES = [   # rolled in this order; first hit wins, remainder is 'clea
 ]
 
 
+# What the aggregator ACTUALLY charges, when it is not honouring the contract.
+# Set by --overcharge. This is the thing the system is supposed to catch, and
+# like every other ground truth it lives only in this file.
+OVERCHARGE: dict = {}
+
+
 def fees(gross: int, instrument: str) -> tuple[int, int, int]:
     """-> (mdr, gst_on_mdr, net). Ground truth; generator only."""
-    kind, v = MDR[instrument]
+    kind, v = OVERCHARGE.get(instrument, MDR[instrument])
     mdr = apply_rate(gross, v) if kind == "rate" else int(v)
     gst = apply_rate(mdr, GST_RATE)
     return mdr, gst, gross - mdr - gst
@@ -328,7 +334,20 @@ def main(argv=None):
     p.add_argument("--orders", type=int, default=60)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--adversarial", action="store_true")
+    p.add_argument("--overcharge", action="store_true",
+                   help="the aggregator quietly bills above the contracted "
+                        "rates; the pipeline should detect and price this")
     a = p.parse_args(argv)
+
+    if a.overcharge:
+        # A realistic silent overcharge: a few basis points on cards and a
+        # rupee on netbanking. Small enough that nobody eyeballing a
+        # spreadsheet would notice; large enough to matter at volume.
+        OVERCHARGE.update({"CARD_CREDIT": ("rate", 0.021),
+                           "CARD_DEBIT": ("rate", 0.0095),
+                           "NETBANKING": ("flat", 1300)})
+        print("generating WITH a silent overcharge: cards +0.1/+0.05 pts, "
+              "netbanking +Rs 1")
 
     if a.adversarial:
         generate_adversarial(a.seed)

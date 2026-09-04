@@ -6,6 +6,18 @@ calendar:
   end_date: "2027-12-31"
   extra_holidays: []          # ISO dates, merchant/bank-specific closures
 
+# The merchant's SIGNED CONTRACT with the aggregator. This is an input, not
+# something to discover: it is in the agreement, and reconciliation exists to
+# check the settlement data against it. Learning the rates from the aggregator's
+# own output instead would quietly accept whatever they charged.
+contract:
+  gst: 0.18                   # statutory, not negotiated
+  instruments:
+    UPI:         {rate: 0.0}          # zero-MDR mandate
+    CARD_DEBIT:  {rate: 0.009}        # 0.9% negotiated
+    CARD_CREDIT: {rate: 0.02}         # 2.0% negotiated
+    NETBANKING:  {flat_paise: 1200}   # flat Rs 12
+
 generator:
   batch_days: 7               # calendar days of activity per batch
   first_batch_start: "2025-01-06"

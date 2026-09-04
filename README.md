@@ -1,6 +1,9 @@
 # recon-agent
 
-**Multi-source reconciliation with self-improving rule induction.**
+**A deterministic three-way reconciliation engine that proves you were charged
+what you agreed to — and uses an LLM only to propose rules, never to decide a
+match.**
+
 Razorpay AI Buildathon — AI Finance Controller track.
 
 ## The problem
@@ -14,206 +17,108 @@ calendar days, and the bank shows one bulk credit where the ledger shows sixty
 transactions. Reconciliation means proving the three agree, and explaining
 exactly why wherever they don't.
 
-## The architectural principle
+## What it does
+
+**It proves you were charged what you agreed to.**
+
+The merchant's contracted rates are an *input* — they are in the signed
+agreement, and every merchant has them. The settlement data is the thing under
+audit. For every transaction the system compares the fee actually deducted
+against the fee the contract allows, and reports the difference in rupees
+against named transactions.
+
+```
+CONTRACT COMPLIANCE
+instrument        contracted      observed     n  verdict
+UPI                       0%            0%    26  matches contract
+CARD_DEBIT              0.9%         0.95%     5  >>> DEVIATES FROM CONTRACT
+CARD_CREDIT               2%          2.1%     9  >>> DEVIATES FROM CONTRACT
+NETBANKING        flat 1200p    flat 1300p     3  >>> DEVIATES FROM CONTRACT
+
+Fee leakage across 43 transactions:  ₹399.33
+  17 transactions charged more than the contract allows
+    CARD_CREDIT          ₹335.78   over 9 transactions
+    CARD_DEBIT            ₹60.01   over 5 transactions
+
+  worst single transactions:
+    STL-HYYZ2XKN  CARD_CREDIT  charged ₹1,169.72, agreed ₹1,114.03, over by ₹55.69
+```
+
+Nobody told it the rates had changed. It read what was actually deducted and
+held it against the contract.
+
+### Why this direction, and not the other one
+
+An earlier version of this project did the opposite: it *induced* the fee
+schedule from settlement data and matched against what it found. That is
+backwards, and we are documenting it because the mistake is instructive.
+
+If the aggregator quietly bills 2.1% against a contracted 2.0%, a system that
+learns from their output observes 2.1%, finds it perfectly consistent with
+history, promotes it, and then silently marks every overcharged transaction as
+correct. It launders the leakage into the books **and reports 100% precision
+while doing it.** Reconciliation exists to verify that what happened matches
+what was *agreed*; learning the rules from one party's own output subverts the
+entire purpose.
+
+Worse, the induction was not even necessary. Fifteen lines of arithmetic
+recover the schedule exactly, with no model, no API calls and no promotion
+gate:
+
+```
+CARD_CREDIT  percentage fee ≈ 2.000%      CARD_DEBIT  percentage fee ≈ 0.900%
+NETBANKING   flat fee ≈ 1200 paise        UPI         percentage fee ≈ 0.000%
+implied GST = 0.18
+```
+
+That is `observed_schedule()` in `src/contract.py`, and it is the honest
+baseline. **No inference machinery gets to claim credit for discovering a
+number that plain statistics recovers for free — or that the merchant already
+has in a contract.**
+
+### So what is the LLM still for?
+
+Two things, and it is fenced out of everything else:
 
 > **Algorithms decide matches. The LLM only proposes rules and writes
-> explanations. The LLM never unilaterally decides that two records match.**
+> explanations. It never unilaterally decides that two records match.**
 
-The model's authority is bounded to two jobs: proposing candidate rules, which
-are then backtested against every previously-resolved record before they can
-take effect, and disambiguating or explaining where a solver returned several
-equally-valid answers. Everything else is deterministic, provable and
-auditable. That boundary is what makes this safe to point at money.
+Every rule it proposes is a machine-checkable predicate that must survive a
+gate — proposed independently at least three times, above a confidence floor,
+and replayed against every previously-resolved record without contradicting
+one. A rule it proposed confidently ("UPI charges 2.5%") was rejected after the
+gate found 83 already-resolved UPI settlements that arrived with no fee at all.
 
-## What makes it different
-
-**The system is not told the fee structure or the settlement timing. It learns
-them from the data.**
-
-The deterministic layer starts with exactly one rule: a settlement claiming an
-order id matches that order. It knows nothing about MDR, GST or settlement
-lag. When it cannot explain a record it escalates to Claude, which proposes a
-*machine-checkable* rule. Proposals accumulate; once one has been independently
-proposed enough times, cleared a confidence floor, and — the gate that matters
-— been replayed against all previously-resolved history without contradicting
-a single record, it is promoted into the deterministic layer. From then on that
-entire class of mismatch resolves with no LLM call at all.
-
-This follows the Hypotheses-to-Theories framework (Zhu et al.,
-[arXiv:2310.07064](https://arxiv.org/abs/2310.07064)): induce rules from
-examples, filter them by occurrence count and association with correct answers,
-then apply the resulting library. Our promotion gate is that filter, made
-unforgiving because the domain is money.
+That governance pattern is the transferable contribution. The fee induction is
+a demonstration vehicle for it, not the product.
 
 ## Results
 
-> ### Read this before the numbers
->
-> The learning-curve table below was produced with the rule-proposal step
-> driven by a **test double** (`Proposer` in `tests/test_rule_engine.py`), which
-> proposes the correct fee rule for whatever instrument it is shown. What it
-> demonstrates is that the gate, the promotion machinery and the pipeline all
-> behave correctly once a proposal arrives: rules are backtested, wrong ones are
-> rejected, promoted ones collapse the exception count, precision holds at 100%.
->
-> The induction step has since been run against a **live model** (Gemini 3.1
-> Flash Lite) over batch 1, which induced the fee formulas correctly and had two
-> of them promoted by the gate — see [Live induction](#live-induction-the-loop-closed-end-to-end)
-> below. That is reported separately rather than merged into this table, because
-> the live run covered one batch and was cut short by free-tier quota.
-
-![learning curve](docs/learning_curve.png)
+The reconciliation engine itself is what does the work, and it gets cheaper as
+it learns. Four honest batches, then batch 5 — the month the aggregator quietly
+raised its rates.
 
 ```
- batch  excep   llm  /100rec  avoided   match    prec  recall   FP  rules   cost
-     1     68    58     44.3       11   44.3%  100.0%   50.4%    0      1     68
-     2     19    20     15.3       10   80.2%  100.0%   92.3%    0      5     19
-     3     14     5      3.9       12   84.4%  100.0%   98.2%    0      8     14
-     4     12     1      0.8       11   85.6%  100.0%   99.2%    0      9     12
-   adv      5     5     10.0        0   76.0%  100.0%   79.5%    0      9      5
+ batch  excep   llm  /100rec  match    prec  recall   FP  rules
+     1     68    58     44.3  44.3%  100.0%   50.4%    0      1
+     2     19    20     15.3  80.2%  100.0%   92.3%    0      5
+     3     14     5      3.9  84.4%  100.0%   98.2%    0      8
+     4     12     1      0.8  85.6%  100.0%   99.2%    0      9
+     5     33    24     17.9  73.1%  100.0%   80.8%    0      9   <- rates changed
+   adv      5     5     10.0  76.0%  100.0%   79.5%    0      9
 ```
 
-| | batch 1 | batch 4 |
-|---|---|---|
-| Open exceptions | 68 | 12 |
-| LLM calls per 100 records | 44.3 | **0.8** |
-| Match rate | 44.3% | 85.6% |
-| Recall | 50.4% | 99.2% |
-| Precision | 100% | 100% |
-| **False positives** | **0** | **0** |
-| Active rules | 1 | 9 |
+Two things to read here.
 
-By batch 4 the deterministic layer answers essentially everything: **less than
-one LLM call per hundred records**, down from forty-four. That is the whole
-thesis — the model is expensive and fallible, so use it to write rules once,
-not to make decisions forever.
+**Batches 1-4:** exceptions fall 68 → 12 and model calls fall from 44 per 100
+records to under one, while precision holds at 100% and false positives stay at
+zero — including on an adversarial set built specifically to induce them.
 
-The adversarial set scores lower on recall by design: its `off_by_one_day`
-records settle a working day outside the learned window, so they are flagged
-for review rather than bound. They are genuine settlements, so that costs
-recall — and it is the conservative answer.
-
-Zero false positives across all five runs, including the adversarial set built
-specifically to induce them.
-
-### What it worked out on its own
-
-```
-UPI          settles at par -- no MDR is deducted at all, so there is no GST either
-CARD_DEBIT   deducts 0.9% of gross, plus 18% GST on that fee (never on the gross)
-CARD_CREDIT  deducts 2% of gross, plus 18% GST on that fee (never on the gross)
-NETBANKING   deducts a flat 1200 paise, plus 18% GST on that fee
-UPI          settles 1 working day after the order
-CARD_DEBIT   settles 2 working days after the order
-CARD_CREDIT  settles 2 working days after the order
-ALL          a net below the fee-implied net indicates a partial refund
-```
-
-Both halves of the merchant's fingerprint: the fee schedule and the settlement
-rhythm. The timing rules are derived purely from observed working-day lags.
-
-Those are exactly the generator's ground-truth constants. They appear in no
-prompt and in no module outside the generator — `tests/test_generate_data.py`
-greps every pipeline module and fails the build if they leak — so nothing in
-the matching path was ever told them; each arrived as a proposal that had to
-clear the gate. Per the note above, the proposals themselves came from a test
-double in this run, so read this as "the library the gate admitted". A live
-model independently arrived at the same four formulas and had two of them
-promoted — see [Live induction](#live-induction-the-loop-closed-end-to-end).
-
-### And what it refused to believe
-
-A 2.5% UPI fee rate, proposed four times at 0.95 confidence, was rejected:
-
-```json
-{"predicate": {"type": "fee_formula", "instrument": "UPI",
-               "params": {"rate": 0.025, "gst": 0.18}},
- "failed_gates": ["backtest"],
- "backtest": {"correct_matches": 0, "wrong_matches": 83, "precision": 0.0},
- "counterexamples": [{"order_id": "ORD-1-0003", "gross_amount_paise": 1507323,
-                      "net_amount_paise": 1507323}]}
-```
-
-83 already-resolved UPI settlements arrived at exactly their gross amount. The
-rule contradicted every one of them, so it never went live. Rejections are as
-much the product as promotions.
-
-## Live induction: the loop closed, end to end
-
-Batch 1, escalation driven by Gemini 3.1 Flash Lite, no ground truth anywhere in
-the prompt. 57 cases escalated. **Two rules were induced by the model and
-promoted by the gate, in one run:**
-
-```
-rule 2  CARD_DEBIT   {"rate": 0.009, "gst": 0.18}  tol=10
-   occurrence 5/3   confidence 1.0
-   backtest support=9  correct=9  wrong=0  precision=1.000
-
-rule 3  CARD_CREDIT  {"rate": 0.02,  "gst": 0.18}  tol=3
-   occurrence 3/3   confidence 1.0
-   backtest support=8  correct=8  wrong=0  precision=1.000
-```
-
-Rendered back in plain English by the Q&A agent:
-
-> CARD_DEBIT: the aggregator deducts 0.9% of gross, plus 18% GST on that fee
-> (never on the gross)
-> CARD_CREDIT: the aggregator deducts 2% of gross, plus 18% GST on that fee
-> (never on the gross)
-
-Both exactly right. Nobody told it either number. A third proposal
-(NETBANKING, `flat_paise 1200`) was correct too but rejected — it had only
-recurred once and had proposed a zero tolerance.
-
-Across runs the model has induced all four fee formulas correctly —
-`UPI {flat_paise 0, gst 0}`, `CARD_DEBIT {0.009, 0.18}`,
-`CARD_CREDIT {0.02, 0.18}`, `NETBANKING {flat 1200, 0.18}` — matching the
-generator's ground truth in every case.
-
-### Two bugs this found that no unit test could
-
-**The gate rejected correct rules over a rounding tolerance.** The model's first
-proposals carried `tolerance_paise: 0`. About 5% of rows drift by a paise or
-two, so at zero tolerance one drifted record counts as a contradiction and the
-rule dies: CARD_DEBIT backtested 8/9 = 0.889 against a 0.98 floor. Right
-economics, refused. The prompt now tells the model that paise-level drift
-exists — guidance about data quality, not about fees.
-
-**Proposals fragmented across tolerances and could never accumulate.** The
-fingerprint included `tolerance_paise`, so as the model converged (tol 0 → 1 →
-2 → 3) each variant was filed as a *different hypothesis*, and every one stayed
-below the occurrence threshold forever. The live log made it obvious:
-
-```
-CARD_DEBIT   n=3  tol=2   {"rate": 0.009, "gst": 0.18}
-CARD_CREDIT  n=2  tol=1   {"rate": 0.02,  "gst": 0.18}
-CARD_CREDIT  n=1  tol=3   {"rate": 0.02,  "gst": 0.18}   <- would have passed
-```
-
-The claim is the formula; the tolerance is a nuisance parameter about noise in
-the data. Proposals are now fingerprinted on the claim and merged, keeping the
-widest allowance up to a cap. That single change is what turned "four correct
-formulas, none promoted" into the promotions above.
-
-Both were invisible to the test suite because the test double proposed one
-fixed, already-sensible tolerance. Only a real model, refining its own guess,
-exposed them.
-
-### A note on free-tier quota
-
-Gemini's free tier allows 500 requests per day **per model per project**, and
-batch 1 alone escalates 57 cases at two to four calls each. The run above ran
-out partway, which is why only 11 cases were LLM-resolved and why NETBANKING and
-UPI never reached three occurrences. Pick a model with budget left — the quota
-is per-model, so switching model buys a fresh 500 — and note that preview models
-carry a much smaller allowance than their names suggest.
-
-When the quota does run out, the pipeline notices. An exhausted daily quota is
-not recoverable within a batch, so after `llm.give_up_after_failures` cases fail
-outright in a row, escalation disables itself for the rest of the run and the
-deterministic layers carry on. Before that existed, a quota-starved batch spent
-48 minutes paying full retry backoff to accomplish nothing; it now stops in 77
-seconds and says why.
+**Batch 5 is the interesting row.** Exceptions jump back to 33 and model calls
+to 24, because the learned rules stop explaining the data. The system does not
+quietly adapt to the new rates; it **notices, refuses, and escalates.** The
+contract audit then prices exactly what changed. A system that had learned its
+rules from the aggregator would have absorbed the increase without a sound.
 
 ## Setup
 
@@ -254,6 +159,7 @@ dialect rejects several JSON Schema keywords (so tool schemas are filtered).
 ```bash
 python -m src.generate_data --batches 4 --seed 42
 python -m src.generate_data --adversarial --seed 99
+python -m src.generate_data --batch 5 --seed 42 --overcharge   # rates quietly raised
 
 python -m src.pipeline --reset-db
 python -m src.pipeline --batch 1
@@ -263,6 +169,7 @@ python -m src.pipeline --batch 4
 python -m src.pipeline --batch adversarial
 
 python -m src.metrics --report
+python -m src.metrics --contract        # were you charged what you agreed to?
 streamlit run app/dashboard.py
 ```
 

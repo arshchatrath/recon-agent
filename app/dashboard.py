@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import src.db as db                                       # noqa: E402
 from src.db import get_conn                               # noqa: E402
+from src.contract import (compare_to_contract, leakage_report)  # noqa: E402
 from src.metrics import learning_curve, rule_activity, score_batch  # noqa: E402
 from src.money import format_paise                        # noqa: E402
 from src.rule_engine import plain_english                 # noqa: E402
@@ -68,8 +69,51 @@ st.caption("Algorithms decide matches. The LLM only proposes rules and writes "
 numbered = [b for b in batches(c) if b.isdigit()]
 curve = pd.DataFrame(learning_curve(c, numbered)) if numbered else pd.DataFrame()
 
+# ------------------------------------------------- 0. were you charged right?
+st.header("1 · Were you charged what you agreed to?")
+st.caption("The contracted rates are an input — they are in the merchant's "
+           "signed agreement. The settlement data is what is under audit. "
+           "Learning the rates from the aggregator's own output instead would "
+           "quietly accept whatever they charged.")
+
+audit_batch = st.selectbox("Audit batch", batches(c),
+                           index=len(batches(c)) - 1, key="audit")
+rows = compare_to_contract(c, audit_batch)
+lk = leakage_report(c, audit_batch)
+
+la, lb, lcol = st.columns(3)
+la.metric("Fee leakage", lk["total_leaked"],
+          delta=None if lk["total_leaked_paise"] == 0 else "over contract",
+          delta_color="inverse")
+lb.metric("Transactions overcharged", lk["transactions_overcharged"],
+          delta_color="inverse")
+lcol.metric("Transactions audited", lk["transactions_checked"])
+
+st.dataframe(pd.DataFrame([{
+    "instrument": r["instrument"],
+    "contracted": r["contracted"],
+    "observed in the data": r.get("observed", "-"),
+    "transactions": r["samples"],
+    "verdict": ("matches contract" if r["agrees"]
+                else "no data" if r["agrees"] is None
+                else "DEVIATES FROM CONTRACT")} for r in rows]),
+    use_container_width=True, hide_index=True)
+
+if lk["total_leaked_paise"] > 0:
+    st.error(f"**{lk['total_leaked']} charged above the contracted rates** "
+             f"across {lk['transactions_overcharged']} transactions.")
+    st.dataframe(pd.DataFrame([{
+        "settlement": w["settlement_txn_id"], "instrument": w["instrument"],
+        "charged": format_paise(w["charged_paise"]),
+        "agreed": format_paise(w["agreed_paise"]),
+        "over by": format_paise(w["leaked_paise"])}
+        for w in lk["worst_offenders"]]),
+        use_container_width=True, hide_index=True)
+else:
+    st.success("Every fee deducted matches the contracted rates.")
+
 # ------------------------------------------------------------ 1. the headline
-st.header("1 · What it learned, batch over batch")
+st.header("2 · What it learned, batch over batch")
 
 if curve.empty:
     st.info("Run at least two batches to see a learning curve.")
@@ -102,7 +146,7 @@ else:
                "fees or settlement timing.")
 
 # ---------------------------------------------------------- 2. batch summary
-st.header("2 · Batch summary")
+st.header("3 · Batch summary")
 sel = st.selectbox("Batch", batches(c), index=len(batches(c)) - 1)
 s = score_batch(c, sel)
 
@@ -138,7 +182,7 @@ with c2:
         st.caption(f"DSU component sizes: {s['component_sizes']}")
 
 # ------------------------------------------------------------ 3. rule library
-st.header("3 · The rule library it induced")
+st.header("4 · The rule library it induced")
 act = rule_activity(c)
 r = st.columns(4)
 r[0].metric("Active rules", act["active"])
@@ -156,8 +200,8 @@ for row in c.execute("SELECT * FROM rules WHERE status='active' ORDER BY priorit
         "induced?": "yes" if row["promoted_from_proposal_id"] else "seeded",
         "promoted": row["promoted_at"] or "-",
         "backtest precision": f"{bt.get('precision', 0):.0%}" if bt else "-",
-        "records agreed": bt.get("correct_matches", "-"),
-        "contradicted": bt.get("wrong_matches", "-"),
+        "records agreed": str(bt.get("correct_matches", "-")),
+        "contradicted": str(bt.get("wrong_matches", "-")),
         "applied": row["times_applied"]})
 st.dataframe(pd.DataFrame(rules), use_container_width=True, hide_index=True)
 st.caption("Nothing here was configured. Every 'induced' row was proposed by "
@@ -181,7 +225,7 @@ with st.expander("Rules the gate BLOCKED — and why", expanded=True):
                    "confidently; the backtest found records they contradicted.")
 
 # --------------------------------------------------------- 4. exception queue
-st.header("4 · Exception queue")
+st.header("5 · Exception queue")
 st.caption("Sorted by money at risk — this is the controller's actual work list.")
 rows = c.execute(
     "SELECT * FROM exceptions WHERE status='open' AND batch_id=?"
@@ -199,7 +243,7 @@ else:
         use_container_width=True, hide_index=True)
 
 # --------------------------------------------------------------- 5. Q&A chat
-st.header("5 · Ask the settlement agent")
+st.header("6 · Ask the settlement agent")
 st.caption('Try: "What have you learned about this merchant?"')
 
 if "chat" not in st.session_state:
