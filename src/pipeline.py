@@ -400,21 +400,33 @@ class BatchRun:
                      "case_id": f"{exc['record_type']}:{exc['record_id']}",
                      "reasoning": v.reasoning})
 
+            # The model's verdict is ADVISORY. It never writes a match.
+            #
+            # This used to create a match when the model said so above a
+            # confidence floor, and running it live showed exactly why that was
+            # wrong: 39 of 39 false positives in batch 1 came from this path and
+            # none from any deterministic one. The model was confirming that a
+            # settlement's own arithmetic was internally consistent -- which
+            # proves the aggregator can subtract and nothing about the pairing --
+            # and reporting confidence 1.0 while doing it. One match even
+            # reasoned that the amount was "significantly different" and matched
+            # it anyway.
+            #
+            # A confidence floor cannot fix that; the model is confidently
+            # wrong, not hesitantly wrong. By our own 50:1 cost model those 39
+            # false positives cost 1,950 against the 68 exceptions (68) that
+            # refusing produces -- so declining is roughly 28x cheaper. And the
+            # README already claimed the LLM never decides a match. The code was
+            # simply more permissive than the principle.
+            note = v.reasoning if v.usable else v.residual_explanation
             if v.usable:
-                self.match(exc["record_type"], exc["record_id"], "settlement",
-                           v.matched_candidate_id, "llm_resolved", "llm",
-                           confidence=v.confidence, explanation=v.reasoning)
-                self.conn.execute(
-                    "UPDATE exceptions SET status='resolved', reason_text=?"
-                    " WHERE exception_id=?", (v.reasoning, exc["exception_id"]))
-                self.counts["exceptions"] -= 1
-            else:
-                # The model declined, or was not confident enough. The record
-                # stays open, with its reasoning attached for the human.
-                self.conn.execute(
-                    "UPDATE exceptions SET reason_text=? WHERE exception_id=?",
-                    (f"{exc['reason_text']} | model: {v.residual_explanation}",
-                     exc["exception_id"]))
+                note = (f"model believes this matches {v.matched_candidate_id} "
+                        f"(confidence {v.confidence:.2f}) -- ADVISORY, not "
+                        f"applied: {v.reasoning}")
+                self.counts["llm_advisory"] += 1
+            self.conn.execute(
+                "UPDATE exceptions SET reason_text=? WHERE exception_id=?",
+                (f"{exc['reason_text']} | model: {note}", exc["exception_id"]))
 
     # ------------------------------------------------------- rule discovery
     DISCOVERABLE = {"timing_window": "per_instrument",

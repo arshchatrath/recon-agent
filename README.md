@@ -76,6 +76,61 @@ baseline. **No inference machinery gets to claim credit for discovering a
 number that plain statistics recovers for free — or that the merchant already
 has in a contract.**
 
+### What a full live run found
+
+The whole sequence was run against a live model (Gemini 3.1 Flash Lite), six
+batches, 41 minutes. It promoted five rules unaided — all four fee formulas in
+**batch 1 alone**, and the refund pattern by batch 4 — and escalations fell from
+57 in batch 1 to 8 by batch 4.
+
+It also produced **53 false positives, and every single one came from the same
+place**: the path where the model's own `match` verdict was allowed to write a
+match. Not one came from any deterministic path.
+
+```
+resolver        false positives
+llm                          53
+deterministic                 0
+subset_sum                    0
+hungarian / mincostflow       0
+```
+
+The reasoning is worth reading, because it is a specific and repeatable error:
+
+> *"The net amount is correctly derived by subtracting the MDR and GST on MDR
+> from the gross amount"* — confidence 1.0
+
+That checks the settlement against **itself**. It proves the aggregator can
+subtract and says nothing about whether this settlement belongs to that order —
+the same mistake the deterministic evaluator made earlier and had fixed. One
+match even reasoned that the amount was *"significantly different"* and matched
+it anyway, at confidence 1.0.
+
+A confidence floor cannot filter this. The model is confidently wrong, not
+hesitantly wrong.
+
+**So the model's verdict is now advisory: it is recorded on the exception for
+the human and never applied.** Removing exactly those 53 rows from the live run
+gives:
+
+```
+ batch     precision            recall     false positives
+     1  59.8% -> 100.0%   50.4% (unchanged)      39 -> 0
+     2  99.1% -> 100.0%   91.5% (unchanged)       1 -> 0
+     3  97.1% -> 100.0%   91.0% (unchanged)       3 -> 0
+     4  96.5% -> 100.0%   93.2% (unchanged)       4 -> 0
+     5  94.2% -> 100.0%   77.6% (unchanged)       6 -> 0
+```
+
+Recall does not move, which means **all 53 were wrong — the model's match
+verdicts scored 0/53.** Declining them costs nothing and removes every false
+positive. By the 50:1 cost model those 53 cost 2,650 against the exceptions
+that replace them.
+
+This is the architectural principle catching the code that violated it: the
+README already said the LLM never decides a match, and only running it live
+revealed that the code was more permissive than the claim.
+
 ### So what is the LLM still for?
 
 Two things, and it is fenced out of everything else:

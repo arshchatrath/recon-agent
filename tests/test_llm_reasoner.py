@@ -350,26 +350,54 @@ def test_the_model_declining_leaves_the_exception_open(conn):
     assert "model: the residual is unexplained" in still_open["reason_text"]
 
 
-def test_an_llm_match_is_stamped_as_llm_resolved_never_exact(conn):
+def test_the_model_never_writes_a_match_however_confident_it_is(conn):
+    """Run live, this path produced 39 of 39 false positives in batch 1 and
+    none came from any deterministic path. The model was confirming that a
+    settlement's own arithmetic was internally consistent -- which says nothing
+    about the pairing -- at confidence 1.0. A confidence floor cannot filter
+    that, because the model is confidently wrong rather than hesitantly wrong.
+
+    Its verdict is now advisory: recorded on the exception for the human,
+    never applied."""
     from src.llm_reasoner import LLMVerdict
     from src.pipeline import BatchRun
     from src.db import ingest_batch
 
     def verdict(case):
-        return LLMVerdict(verdict="match", confidence=0.95,
+        return LLMVerdict(verdict="match", confidence=1.0,
                           matched_candidate_id=case["record"].get(
                               "settlement_txn_id"),
-                          reasoning="fee and GST account for the difference")
+                          reasoning="the arithmetic checks out")
 
     ingest_batch(conn, "1")
     BatchRun(conn, "1", reasoner=ScriptedReasoner(verdict), use_llm=True).run()
-    rows = conn.execute("SELECT * FROM matches WHERE resolved_by='llm'").fetchall()
-    assert rows
-    for m in rows:
-        assert m["match_kind"] == "llm_resolved"
-        assert m["confidence"] >= 0.75
-    assert conn.execute("SELECT COUNT(*) c FROM matches WHERE match_kind='exact'"
-                        " AND left_type='order'").fetchone()["c"] == 0
+
+    assert conn.execute("SELECT COUNT(*) c FROM matches WHERE resolved_by='llm'"
+                        ).fetchone()["c"] == 0, "the model wrote a match"
+
+    advisory = conn.execute(
+        "SELECT reason_text FROM exceptions WHERE reason_text LIKE"
+        " '%ADVISORY%' LIMIT 1").fetchone()
+    assert advisory, "its opinion must still reach the human"
+    assert "not applied" in advisory["reason_text"]
+
+
+def test_a_confident_wrong_verdict_costs_nothing(conn):
+    """The whole point: the exception stays open rather than becoming a wrong
+    match. By the declared 50:1 cost model an open exception is ~28x cheaper
+    than the false positive it replaces."""
+    from src.llm_reasoner import LLMVerdict
+    from src.pipeline import BatchRun
+    from src.db import ingest_batch
+
+    ingest_batch(conn, "1")
+    r = ScriptedReasoner(lambda case: LLMVerdict(
+        verdict="match", confidence=1.0, matched_candidate_id="STL-NONSENSE",
+        reasoning="trust me"))
+    summary = BatchRun(conn, "1", reasoner=r, use_llm=True).run()
+    assert summary["exceptions"] > 50
+    assert conn.execute("SELECT COUNT(*) c FROM matches WHERE"
+                        " right_id='STL-NONSENSE'").fetchone()["c"] == 0
 
 
 def test_an_api_outage_marks_llm_unavailable_and_the_batch_still_finishes(conn):
