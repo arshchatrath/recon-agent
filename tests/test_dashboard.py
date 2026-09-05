@@ -44,28 +44,32 @@ def test_the_dashboard_renders_without_an_exception(real_db):
     assert not at.exception, [str(e) for e in at.exception]
 
 
-def test_all_five_sections_are_present(real_db):
+def test_every_section_is_reachable(real_db):
+    """Tabs rather than a long scroll: a demo watched at small size should not
+    require the presenter to hunt."""
     at = run_app()
-    headers = " ".join(h.value for h in at.header)
-    for section in ("What it learned", "Batch summary", "rule library",
-                    "Exception queue", "Ask the settlement agent"):
-        assert section in headers, f"missing section: {section}"
+    labels = [t.label for t in at.tabs]
+    assert labels == ["Contract audit", "How it learned", "Rule library",
+                      "Exceptions", "Ask"], labels
 
 
-def test_the_contract_audit_leads_the_page(real_db):
-    """Contract compliance comes first: it is what the system is for. The
-    learning curve is how it got cheap, not what it delivers."""
+def test_the_page_answers_its_own_title_before_anything_else(real_db):
+    """The title asks a question; the banner under it must answer that question
+    without the viewer clicking anything."""
     at = run_app()
-    labels = [m.label for m in at.metric]
-    assert labels[:3] == ["Fee leakage", "Transactions overcharged",
-                          "Transactions audited"]
+    assert "charged what you agreed" in at.title[0].value
+    banner = " ".join(m.value for m in at.markdown)
+    assert ("more than your contract allows" in banner
+            or "matches the contracted rates" in banner), banner
 
 
-def test_the_learning_curve_metrics_follow(real_db):
+def test_the_sidebar_carries_the_standing_status(real_db):
+    """One control and four numbers, always visible whichever tab is open."""
     at = run_app()
-    labels = [m.label for m in at.metric]
-    assert labels[3:7] == ["Open exceptions", "LLM calls per 100 records",
-                           "Match rate", "False positives"]
+    labels = [m.label for m in at.sidebar.metric]
+    assert labels == ["Fee leakage", "Open exceptions", "Precision",
+                      "False positives"]
+    assert len(at.sidebar.selectbox) == 1, "one batch control, not two"
 
 
 def test_every_dataframe_actually_serialises(real_db):
@@ -80,9 +84,9 @@ def test_every_dataframe_actually_serialises(real_db):
 
 def test_the_headline_numbers_are_the_real_ones(real_db):
     at = run_app()
-    by_label = {m.label: m.value for m in at.metric}
+    by_label = {m.label: m.value for m in at.sidebar.metric}
     assert by_label["False positives"] == "0"
-    assert by_label["Match rate"].endswith("%")
+    assert by_label["Precision"].endswith("%")
     assert int(by_label["Open exceptions"]) < 40      # down from batch 1's 68
 
 
@@ -100,9 +104,9 @@ def test_the_chat_input_is_present_even_without_an_api_key(real_db):
 
 def test_switching_batches_does_not_break_it(real_db):
     at = run_app()
-    at.selectbox[0].select("1").run()
+    at.sidebar.selectbox[0].select("1").run()
     assert not at.exception, [str(e) for e in at.exception]
-    assert any(m.label == "Precision" for m in at.metric)
+    assert any(m.label == "Precision" for m in at.sidebar.metric)
 
 
 def test_pytest_does_not_touch_the_project_database(real_db):
