@@ -39,7 +39,7 @@ def test_hungarian_beats_greedy_on_amount_twins():
     sb = stl("SB", 100_100, 100_100 - 3003 - 601)      # B's true settlement
 
     C = cost_matrix([a, b], [sa, sb], rules)
-    # greedy's local best for A is genuinely SA, but the tie is near enough that
+    # greedy's local best for A is SA, but the tie is near enough that
     # the pairing only comes out right if both rows are optimised together
     g = greedy([a, b], [sa, sb], rules)
     h, _, _ = solve_hungarian([a, b], [sa, sb], rules)
@@ -108,7 +108,7 @@ def test_min_cost_flow_binds_one_order_to_two_settlements_when_explained():
 
 def test_a_split_leg_is_left_unmatched_rather_than_guessed():
     """A leg settling 40,000 of a 100,000 order is not explained by the fee
-    rule -- the rule speaks to full settlements. Rather than bind it on a
+    rule, the rule speaks to full settlements. Rather than bind it on a
     hand-wave, the solver declines and it becomes an exception a human sees.
     This costs recall on split payouts and buys precision; learning a split
     rule is the upgrade path."""

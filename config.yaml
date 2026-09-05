@@ -54,7 +54,7 @@ assignment:
   # A pair that no active rule explains must cost more than declining it. The
   # factor of two is because declining leaves TWO records unmatched (the order
   # and the settlement), each charged the sink price. Break this invariant and
-  # the solver will happily bind records it cannot justify -- see
+  # the solver will happily bind records it cannot justify, see
   # test_empty_rule_library_matches_nothing.
   unexplained_penalty: 120.0
   unmatched_sink_cost: 50.0
@@ -93,7 +93,7 @@ rule_engine:
   max_tolerance_paise: 10
   # A contradiction smaller than this is rounding drift in the data, not a
   # wrong rule. Bigger than this and the rule is genuinely wrong, whatever its
-  # precision looks like. Keep it small -- this is the one place where the
+  # precision looks like. Keep it small, this is the one place where the
   # zero-tolerance stance is relaxed, and it must stay a noise band, not a
   # loophole.
   noise_band_paise: 5

@@ -148,7 +148,7 @@ def test_exceptions_and_llm_calls_fall_while_match_rate_rises(scored):
 
 
 def test_false_positives_stay_at_zero_across_the_run(scored):
-    """If this ever fails, report the number -- do not tune it away."""
+    """If this ever fails, report the number, do not tune it away."""
     curve = learning_curve(scored)
     assert [r["false_positive_count"] for r in curve] == [0, 0, 0, 0], \
         f"false positives appeared: {curve}"

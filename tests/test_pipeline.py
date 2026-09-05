@@ -104,7 +104,7 @@ def test_orphan_settlements_are_detected(conn):
 
 # --------------------------------------------- what learning will unlock
 def test_the_same_batch_resolves_once_the_rules_are_known(conn):
-    """Same data, same code -- only the rule library differs. This is the
+    """Same data, same code, only the rule library differs. This is the
     delta the rule engine is aiming to produce on its own."""
     cold = run_batch(conn, "1")
     conn.execute("DELETE FROM matches")
@@ -146,7 +146,7 @@ def test_the_pipeline_never_reads_ground_truth(conn):
 def test_split_payouts_are_matched_once_the_fee_rules_are_known(conn):
     """A leg covering 40% of an order is INAPPLICABLE to a fee rule, so the
     assignment solver declines it and every split used to become an exception
-    -- the single largest cause of missed recall. The legs' GROSS amounts sum
+   , the single largest cause of missed recall. The legs' GROSS amounts sum
     to the order's gross exactly, which is a subset sum and needs no new rule."""
     seed_true_rules(conn)
     run_batch(conn, "1")

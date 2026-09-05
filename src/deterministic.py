@@ -5,7 +5,7 @@ rule library is loaded from the `rules` table, which starts holding exactly one
 rule (exact ID match). Everything else arrives by promotion in Phase 5.
 
 Predicates are data, never code. A proposed `expr` string is matched against a
-small set of known templates and then computed structurally in Python -- an
+small set of known templates and then computed structurally in Python, an
 LLM-authored string is never eval()'d.
 """
 from __future__ import annotations
@@ -168,7 +168,7 @@ def evaluate(pred: dict, left, right, rules: "RuleSet | None" = None):
         # what the MERCHANT'S order should have settled at", so the gross comes
         # from the left (the order) whenever we have one. Checking the
         # settlement row against itself only proves the aggregator can subtract
-        # -- it is true of every internally-consistent row, including an orphan
+        #, it is true of every internally-consistent row, including an orphan
         # bound to the wrong order, which is exactly how one got matched.
         order_gross = _d(left, "gross_amount_paise")
         gross = _d(right, "gross_amount_paise")
@@ -178,7 +178,7 @@ def evaluate(pred: dict, left, right, rules: "RuleSet | None" = None):
         if order_gross is not None and gross is not None and order_gross != gross:
             # A partial leg of a split payout. The fee rate is not what is in
             # question here, so the rule has no opinion rather than a negative
-            # one -- being counted wrong for this would block its promotion.
+            # one, being counted wrong for this would block its promotion.
             return INAPPLICABLE
         return within_tolerance(
             net, fee_expected_net(order_gross if order_gross is not None
@@ -193,14 +193,14 @@ def evaluate(pred: dict, left, right, rules: "RuleSet | None" = None):
         return pred["min_working_days"] <= lag <= pred["max_working_days"]
 
     if t == "refund_pattern":
-        # "the shortfall is a refund, not a mismatch" -- needs a fee rule to
+        # "the shortfall is a refund, not a mismatch", needs a fee rule to
         # know what the net should have been, so it is inapplicable until one
         # has been learned.
         #
         # It ALSO requires the merchant's own ledger to say the order was
         # partly refunded. Without that condition the rule reads "any net below
         # expectation is a refund", which would explain away every genuine
-        # mismatch in the batch -- a false-positive engine wearing a rule's
+        # mismatch in the batch, a false-positive engine wearing a rule's
         # clothing. The status column is ledger data, not ground truth.
         gross, net = _d(right, "gross_amount_paise"), _d(right, "net_amount_paise")
         if gross is None or net is None or rules is None:
@@ -209,7 +209,7 @@ def evaluate(pred: dict, left, right, rules: "RuleSet | None" = None):
         if status is None or status != "refunded_partial":
             # No opinion, not a denial. In the matching path these are
             # equivalent (both fall through to the next rule), but the backtest
-            # reads False as "contradicts a resolved record" -- so returning it
+            # reads False as "contradicts a resolved record", so returning it
             # here made every clean settlement in history count against the
             # rule, 44 out of 44, and it could never be promoted.
             return INAPPLICABLE
@@ -318,7 +318,7 @@ def precedence_edges(rules: list[Rule]) -> list[tuple[int, int]]:
 
 def topological_order(rules: list[Rule]) -> list[Rule]:
     """Kahn's algorithm. A cycle means the library contradicts itself about
-    which rule wins -- that is a RuleConflictError, not something to guess at."""
+    which rule wins, that is a RuleConflictError, not something to guess at."""
     n = len(rules)
     edges = set(precedence_edges(rules))
     indeg = [0] * n
@@ -379,12 +379,12 @@ def backtest(conn, predicate, exclude_batch=None) -> dict:
 
     A rule earns its place by agreeing with what we have already decided. So:
 
-      correct  -- the predicate fires True on a pair we recorded as a match
-      wrong    -- the predicate says False about a pair we recorded as a match,
+      correct , the predicate fires True on a pair we recorded as a match
+      wrong   , the predicate says False about a pair we recorded as a match,
                   i.e. it contradicts a resolved record
-      skipped  -- INAPPLICABLE; the rule has no opinion, which costs it nothing
+      skipped . INAPPLICABLE; the rule has no opinion, which costs it nothing
 
-    `wrong` is the number that matters. A fee rate induced from one coincidental
+    `wrong` is the number that counts. A fee rate induced from one coincidental
     case (a refund that happens to look like a fee at another rate) will be
     False on every genuine settlement of that instrument, and the count blows
     up immediately. That is the gate catching a plausible-looking wrong answer.
@@ -392,7 +392,7 @@ def backtest(conn, predicate, exclude_batch=None) -> dict:
     predicate = validate_predicate(predicate)
     # The already-promoted library, for rules that depend on it. A refund rule
     # says "the net fell short of what the fee schedule implies", which is
-    # unanswerable without the fee rules -- judged against an empty library it
+    # unanswerable without the fee rules, judged against an empty library it
     # is INAPPLICABLE everywhere, scores zero support, and can never be
     # promoted. Only refund_pattern consults this; a fee or timing predicate is
     # still evaluated entirely on its own terms.
@@ -401,12 +401,12 @@ def backtest(conn, predicate, exclude_batch=None) -> dict:
     # Two independent sources of already-resolved evidence, unioned:
     #
     #   1. order/settlement pairs we have recorded as matches, and
-    #   2. settlements the BANK leg confirmed -- the subset-sum solver proved
-    #      they make up a real bulk credit -- joined to the order whose id they
+    #   2. settlements the BANK leg confirmed, the subset-sum solver proved
+    #      they make up a real bulk credit, joined to the order whose id they
     #      claim.
     #
     # (2) matters enormously: it needs no knowledge of fees, so it exists from
-    # batch 1. Without it the system deadlocks -- no fee rule can gather
+    # batch 1. Without it the system deadlocks, no fee rule can gather
     # backtest support until some pair is matched, and no pair can be matched
     # until a fee rule is promoted. The bank leg is the way out, and it is
     # honest evidence rather than a bootstrap hack: arithmetic on the bank
@@ -429,7 +429,7 @@ def backtest(conn, predicate, exclude_batch=None) -> dict:
 
     # Orders paid out across several settlements. A split's later legs settle a
     # day or more after the first, so judging a base-settlement-rhythm rule on
-    # them counts a correct rule wrong -- the same reason refunded orders are
+    # them counts a correct rule wrong, the same reason refunded orders are
     # skipped below. A fee rule is already INAPPLICABLE to a partial leg, so
     # this only affects timing.
     # Read this from the settlements data, not from the matches table. History
@@ -460,7 +460,7 @@ def backtest(conn, predicate, exclude_batch=None) -> dict:
             # The merchant's own ledger says this order was refunded, so a
             # short settlement is expected. Holding that against a fee rule
             # would be scoring it on a question it was never asked. This is
-            # ledger data, not ground truth -- the status column is in
+            # ledger data, not ground truth, the status column is in
             # orders.csv, which the pipeline is entitled to read.
             skipped += 1
             continue

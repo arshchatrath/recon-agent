@@ -1,7 +1,7 @@
 """Globally optimal matching within a component. Never greedy.
 
 Greedy takes the locally cheapest pair and, on amount twins, binds the wrong
-one -- a false positive, which is the expensive kind of error here. Hungarian
+one, a false positive, which is the expensive kind of error here. Hungarian
 (1:1) and min-cost max-flow (1:N) both optimise the whole component at once.
 
 Every node also gets an edge to an "unmatched" sink priced at
@@ -41,7 +41,7 @@ def pair_cost(order, settlement, rules=None, cfg=None) -> float:
     """Cost of binding this order to this settlement. Lower is better.
 
     Every term that depends on the merchant's economics comes from `rules`,
-    which is the learned library -- with an empty library the amount and date
+    which is the learned library, with an empty library the amount and date
     terms contribute nothing and the unexplained-pair penalty dominates, so
     batch 1 correctly refuses to match much of anything.
     """

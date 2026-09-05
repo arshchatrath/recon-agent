@@ -2,7 +2,7 @@
 
 THIS MODULE IS THE ONLY PLACE THE MERCHANT'S ECONOMICS EXIST. The MDR rates,
 the GST rate and the settlement lags below are ground truth that the pipeline
-must induce from the data. Never import them anywhere else -- the leakage test
+must induce from the data. Never import them anywhere else, the leakage test
 fails the build if these numbers appear in another src module.
 """
 from __future__ import annotations
@@ -288,13 +288,13 @@ def generate_adversarial(seed: int) -> Path:
                                net if net_override is None else net_override, instr)
         e.add_truth(oid, txn, case, trap_type)
 
-    # 1. amount twins -- identical gross + instrument, settling one day apart.
+    # 1. amount twins, identical gross + instrument, settling one day apart.
     #    A greedy matcher will bind the wrong pair.
     for k in range(4):
         for day in (0, 1):
             trap(at(day), 250000 + k * 7000, "CARD_CREDIT", "amount_twins")
 
-    # 2. coincidental subsets -- an unrelated subset sums to the same total as
+    # 2. coincidental subsets, an unrelated subset sums to the same total as
     #    the true constituents. UPI is zero-fee, which pins net == gross so the
     #    collision is exact.
     for label, amounts, day in (("true", [100000, 200000, 300000], 2),
@@ -303,7 +303,7 @@ def generate_adversarial(seed: int) -> Path:
             assert fees(amt, "UPI")[2] == amt, "UPI must be zero-fee here"
             trap(at(day), amt, "UPI", f"coincidental_subset_{label}")
 
-    # 3. near-fee trap -- a UPI order (0% MDR) partially refunded by exactly what
+    # 3. near-fee trap, a UPI order (0% MDR) partially refunded by exactly what
     #    a 2% card fee plus GST would have taken. A rule induced from this case
     #    alone is wrong, and backtesting has to catch it.
     for k in range(3):
@@ -313,7 +313,7 @@ def generate_adversarial(seed: int) -> Path:
         trap(at(4), gross, "UPI", "near_fee_trap", status="refunded_partial",
              net_override=fees(gross, "UPI")[2] - refund, case="partial_refund")
 
-    # 4. off-by-one-day -- same amount, same instrument; one settles inside the
+    # 4. off-by-one-day, same amount, same instrument; one settles inside the
     #    normal window, its twin one working day late.
     for k in range(3):
         gross = 315000 + k * 5000

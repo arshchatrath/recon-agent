@@ -1,4 +1,4 @@
-"""Phase 4 with a stubbed client -- the suite must never need an API key.
+"""Phase 4 with a stubbed client, the suite must never need an API key.
 
 What matters here is the fencing: abstention works, low confidence is discarded
 whatever the model claimed, malformed output is retried and then given up on,
@@ -139,7 +139,7 @@ def test_a_match_below_the_confidence_floor_is_downgraded(conn):
     assert v.verdict == "insufficient_information"
     assert v.matched_candidate_id is None
     assert "below the 0.75 floor" in v.residual_explanation
-    # the rule proposal survives -- proposing is cheap and gated downstream
+    # the rule proposal survives, proposing is cheap and gated downstream
     assert v.proposed_rule is not None
 
 
@@ -265,7 +265,7 @@ def test_token_counters_accumulate_across_cases(conn):
 def test_backtest_rewards_a_rule_that_agrees_with_history(conn):
     """Seed matches, then check a rule that describes them exactly."""
     ingest_batch(conn, "1")
-    # net == gross picks the genuinely clean zero-fee rows; a partial refund or
+    # net == gross picks the clean zero-fee rows; a partial refund or
     # a paise of rounding drift would make this a test of the data, not the gate
     s = conn.execute("SELECT * FROM settlements WHERE instrument='UPI'"
                      " AND net_amount_paise = gross_amount_paise LIMIT 5"
@@ -353,8 +353,8 @@ def test_the_model_declining_leaves_the_exception_open(conn):
 def test_the_model_never_writes_a_match_however_confident_it_is(conn):
     """Run live, this path produced 39 of 39 false positives in batch 1 and
     none came from any deterministic path. The model was confirming that a
-    settlement's own arithmetic was internally consistent -- which says nothing
-    about the pairing -- at confidence 1.0. A confidence floor cannot filter
+    settlement's own arithmetic was internally consistent, which says nothing
+    about the pairing, at confidence 1.0. A confidence floor cannot filter
     that, because the model is confidently wrong rather than hesitantly wrong.
 
     Its verdict is now advisory: recorded on the exception for the human,

@@ -1,4 +1,4 @@
-"""Contract compliance — the point of the whole system.
+"""Contract compliance, the point of the whole system.
 
 An earlier version induced the fee schedule from settlement data and matched
 against what it found, which meant a silently overcharging aggregator would be
@@ -126,7 +126,7 @@ def test_zero_percent_is_not_reported_as_a_shape_deviation(overcharging):
 
 def test_split_payouts_do_not_create_phantom_undercharging(honest):
     """A flat fee is charged once per settlement, but a split spreads it across
-    legs -- so counting legs individually made an overcharging aggregator look
+    legs, so counting legs individually made an overcharging aggregator look
     like it was undercharging."""
     assert leakage_report(honest)["total_leaked_paise"] == 0
 

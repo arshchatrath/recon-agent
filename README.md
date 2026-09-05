@@ -1,16 +1,16 @@
 # recon-agent
 
 **A deterministic three-way reconciliation engine that proves you were charged
-what you agreed to — and uses an LLM only to propose rules, never to decide a
+what you agreed to, and uses an LLM only to propose rules, never to decide a
 match.**
 
-Razorpay AI Buildathon — AI Finance Controller track.
+Razorpay AI Buildathon. AI Finance Controller track.
 
 ## The problem
 
 An Indian merchant on a payment aggregator holds three independent records of
 the same money: their own order ledger, the aggregator's settlement report, and
-their bank statement. They disagree by construction — card transactions are
+their bank statement. They disagree by construction. Card transactions are
 settled net of MDR plus 18% GST on that MDR while UPI carries none, UPI settles
 T+1 and cards T+2 in *working* days so a weekend stretches a T+2 into four
 calendar days, and the bank shows one bulk credit where the ledger shows sixty
@@ -21,7 +21,7 @@ exactly why wherever they don't.
 
 **It proves you were charged what you agreed to.**
 
-The merchant's contracted rates are an *input* — they are in the signed
+The merchant's contracted rates are an *input*. They sit in the signed
 agreement, and every merchant has them. The settlement data is the thing under
 audit. For every transaction the system compares the fee actually deducted
 against the fee the contract allows, and reports the difference in rupees
@@ -73,14 +73,14 @@ implied GST = 0.18
 
 That is `observed_schedule()` in `src/contract.py`, and it is the honest
 baseline. **No inference machinery gets to claim credit for discovering a
-number that plain statistics recovers for free — or that the merchant already
+number that plain statistics recovers for free, or that the merchant already
 has in a contract.**
 
 ### What a full live run found
 
 The whole sequence was run against a live model (Gemini 3.1 Flash Lite), six
-batches, 41 minutes. It promoted five rules unaided — all four fee formulas in
-**batch 1 alone**, and the refund pattern by batch 4 — and escalations fell from
+batches, 41 minutes. It promoted five rules unaided, all four fee formulas in
+**batch 1 alone**, and the refund pattern by batch 4, and escalations fell from
 57 in batch 1 to 8 by batch 4.
 
 It also produced **53 false positives, and every single one came from the same
@@ -98,11 +98,10 @@ hungarian / mincostflow       0
 The reasoning is worth reading, because it is a specific and repeatable error:
 
 > *"The net amount is correctly derived by subtracting the MDR and GST on MDR
-> from the gross amount"* — confidence 1.0
+> from the gross amount"*, confidence 1.0
 
 That checks the settlement against **itself**. It proves the aggregator can
-subtract and says nothing about whether this settlement belongs to that order —
-the same mistake the deterministic evaluator made earlier and had fixed. One
+subtract and says nothing about whether this settlement belongs to that order, the same mistake the deterministic evaluator made earlier and had fixed. One
 match even reasoned that the amount was *"significantly different"* and matched
 it anyway, at confidence 1.0.
 
@@ -124,20 +123,20 @@ change, and these numbers are measured, not derived:
 ```
 
 **Precision 100% on every batch, zero false positives, zero model-written
-matches** — against 53 false positives from that path in the run before the
+matches**, against 53 false positives from that path in the run before the
 change. Recall is unaffected, which means all 53 had been wrong: the model's
 match verdicts scored **0/53**. Declining them costs nothing.
 
 The model still promoted all four fee formulas in batch 1 alone, unaided:
 
 ```
-UPI          settles at par -- no MDR is deducted at all
+UPI          settles at par, no MDR is deducted at all
 CARD_DEBIT   0.9% of gross, plus 18% GST on that fee
 CARD_CREDIT  2% of gross, plus 18% GST on that fee
 NETBANKING   a flat 1200 paise, plus 18% GST on that fee
 ```
 
-And batch 5 -- the month the aggregator quietly raised its rates -- was caught
+And batch 5, the month the aggregator quietly raised its rates, was caught
 by the contract audit at ₹399.33 across 17 transactions, while the gate refused
 to promote the new rates because they contradict four batches of history.
 
@@ -153,7 +152,7 @@ Two things, and it is fenced out of everything else:
 > explanations. It never unilaterally decides that two records match.**
 
 Every rule it proposes is a machine-checkable predicate that must survive a
-gate — proposed independently at least three times, above a confidence floor,
+gate, proposed independently at least three times, above a confidence floor,
 and replayed against every previously-resolved record without contradicting
 one. A rule it proposed confidently ("UPI charges 2.5%") was rejected after the
 gate found 83 already-resolved UPI settlements that arrived with no fee at all.
@@ -164,7 +163,7 @@ a demonstration vehicle for it, not the product.
 ## Results
 
 The reconciliation engine itself is what does the work, and it gets cheaper as
-it learns. Four honest batches, then batch 5 — the month the aggregator quietly
+it learns. Four honest batches, then batch 5, the month the aggregator quietly
 raised its rates.
 
 ```
@@ -181,7 +180,7 @@ Two things to read here.
 
 **Batches 1-4:** exceptions fall 68 → 12 and model calls fall from 44 per 100
 records to under one, while precision holds at 100% and false positives stay at
-zero — including on an adversarial set built specifically to induce them.
+zero, including on an adversarial set built specifically to induce them.
 
 **Batch 5 is the interesting row.** Exceptions jump back to 33 and model calls
 to 24, because the learned rules stop explaining the data. The system does not
@@ -213,8 +212,8 @@ llm:
 | `gemini` | `GEMINI_API_KEY` | needs `google-genai` |
 
 `src/llm_client.py` is the whole adapter. Both reasoning layers are written
-against one small surface — `client.messages.create(...)` returning content
-blocks — which is also the surface the test stubs implement, so the tested path
+against one small surface, `client.messages.create(...)` returning content
+blocks, which is also the surface the test stubs implement, so the tested path
 and the shipped path are the same path. Adding a third provider means
 implementing that surface and nothing else.
 
@@ -246,7 +245,7 @@ Without a key the pipeline still runs end to end: escalation disables itself
 once, with a message, and the deterministic layers do their work. You will see
 the batch-1 baseline (44.3% match rate, 68 exceptions) repeated for every batch
 and **no rules promoted**, because nothing is proposing any. That is the
-correct cold-start behaviour, not a failure — see the note above the results.
+correct cold-start behaviour, not a failure, see the note above the results.
 
 Add `--no-llm` to skip the escalation attempt entirely. `python -m pytest` runs
 349 tests and needs no API key; the model is stubbed throughout.
@@ -279,25 +278,25 @@ with money", and it is why precision stays at 100%.
 The cost-weighted error score prices a false positive at **50× an open
 exception**. A wrong match silently corrupts the books and is found months
 later by an auditor, if ever; an open exception costs a controller two minutes
-and is visible on a work queue. Every design decision upstream — the unmatched
+and is visible on a work queue. Every design decision upstream, the unmatched
 sink, subset-sum reporting ambiguity instead of picking, the zero-tolerance
-backtest gate, the model's licence to abstain — is that ratio expressed in
+backtest gate, the model's licence to abstain, is that ratio expressed in
 code.
 
 ## Honest limitations
 
-- **Scale.** 50–60 records per batch of synthetic data, against production
+- **Scale.** 50-60 records per batch of synthetic data, against production
   volumes in the millions. The algorithms were chosen to scale (bitset DP is
   word-parallel, DSU keeps components small, blocking avoids the quadratic),
   but that is an argument, not a measurement.
 - **This is a proof of concept, not a competitor.** Commercial auto-match
   baselines sit above 90%. We reach 78.8% match rate at 88.9% recall on
   synthetic data, having started from zero domain knowledge.
-- **The exception curve flattens after batch 2** at around 18–19 open
-  exceptions. What remains is genuinely unresolvable from the data: orders with
+- **The exception curve flattens after batch 2** at around 18-19 open
+  exceptions. What remains is unresolvable from the data: orders with
   no settlement row at all, orphan settlements claiming orders that do not
   exist, and chargeback reversals. Those are exactly the things a controller
-  should look at, so the floor is arguably correct — but it means the curve is
+  should look at, so the floor is arguably correct, but it means the curve is
   a step, not a slope, and we show it that way.
 - **`narration_pattern` has never been induced.** The generator deliberately
   writes narrations that carry no batch id, so there is no pattern to find. The
@@ -312,7 +311,7 @@ code.
 ## Repository
 
 ```
-src/money.py            integer paise, banker's rounding — all money math
+src/money.py            integer paise, banker's rounding, all money math
 src/calendar_utils.py   O(1) working-day arithmetic, Indian holidays
 src/generate_data.py    synthetic data + adversarial traps (owns the constants)
 src/blocking.py         hash join, amount index, Union-Find
@@ -321,7 +320,7 @@ src/assignment.py       Hungarian, min-cost flow, the unmatched sink
 src/deterministic.py    predicate evaluation, precedence DAG, backtest
 src/llm_reasoner.py     bounded LLM escalation with verification tools
 src/rule_engine.py      proposal intake, the promotion gate, retirement
-src/metrics.py          scoring — the ONLY module that reads ground truth
+src/metrics.py          scoring, the ONLY module that reads ground truth
 src/qa_agent.py         settlement Q&A over SQLite with tool use
 app/dashboard.py        Streamlit
 ```

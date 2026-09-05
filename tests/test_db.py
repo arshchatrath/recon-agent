@@ -73,7 +73,7 @@ def test_ingest_is_idempotent(conn):
 
 
 def test_orphan_settlements_survive_ingestion(conn):
-    """order_id_claimed is intentionally not a FK -- orphans are a case to detect."""
+    """order_id_claimed is intentionally not a FK, orphans are a case to detect."""
     ingest_batch(conn, "1")
     orphans = query(conn, "SELECT COUNT(*) c FROM settlements s WHERE NOT EXISTS"
                           " (SELECT 1 FROM orders o WHERE o.order_id=s.order_id_claimed)")

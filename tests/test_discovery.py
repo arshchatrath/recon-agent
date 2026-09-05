@@ -24,7 +24,7 @@ def conn(tmp_path):
 
 class Observer:
     """Stands in for a model that reads the examples it is shown and reports
-    the pattern -- fees from exception cases, timing from discovery cases. It
+    the pattern, fees from exception cases, timing from discovery cases. It
     is told nothing; every answer is derived from the case it receives."""
 
     def __init__(self):
@@ -101,7 +101,7 @@ def test_the_discovery_leg_induces_a_timing_window(conn):
 
 
 def test_the_learned_timing_matches_the_real_settlement_lag(conn):
-    """UPI settles T+1, everything else T+2 -- induced, never configured."""
+    """UPI settles T+1, everything else T+2, induced, never configured."""
     from src.deterministic import RuleSet
     run(conn)
     rules = RuleSet.load(conn)
@@ -180,7 +180,7 @@ def test_a_dead_service_stops_discovery_immediately(conn):
 
 def test_timing_and_fees_together_answer_the_demo_question(conn):
     """'What have you learned about this merchant?' should describe both the
-    fee schedule AND the settlement rhythm -- the pitch claims both."""
+    fee schedule AND the settlement rhythm, the pitch claims both."""
     from src.rule_engine import plain_english
     run(conn)
     rendered = " ".join(
@@ -192,7 +192,7 @@ def test_timing_and_fees_together_answer_the_demo_question(conn):
 
 def test_timing_rules_accrue_usage_so_retirement_can_judge_them(conn):
     """A match records the FEE rule as its rule_id, so timing windows used to
-    sit at times_applied=0 forever -- and a rule that cannot be judged cannot
+    sit at times_applied=0 forever, and a rule that cannot be judged cannot
     be withdrawn. They are now credited when they participate in a match."""
     run(conn)
     timing = conn.execute(

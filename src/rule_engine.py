@@ -3,7 +3,7 @@
 This is the part that makes the system self-improving rather than merely
 LLM-assisted. A proposed rule is a hypothesis; it becomes part of the
 deterministic layer only after it has been proposed independently several
-times, carried enough confidence, and -- the gate that actually matters --
+times, carried enough confidence, and, the gate that actually matters --
 been replayed against every record already resolved without contradicting one
 of them.
 
@@ -43,7 +43,7 @@ def audit(conn, event, *, rule_id=None, proposal_id=None, batch_id=None, detail)
 # ------------------------------------------------------------------- intake
 def intake(conn, batch_id, predicate, confidence, case_id=None, cfg=None) -> dict:
     """Record one proposal. Identical proposals collapse onto one fingerprint
-    and increment its occurrence count -- that count is the first gate."""
+    and increment its occurrence count, that count is the first gate."""
     try:
         pred = validate_predicate(predicate)
     except PredicateError as e:
@@ -89,7 +89,7 @@ def intake(conn, batch_id, predicate, confidence, case_id=None, cfg=None) -> dic
         # Keep the most generous tolerance anyone proposed, capped. The claim
         # is identical across these proposals; the widest allowance is the one
         # that survives rounding drift. The cap stops a single sloppy proposal
-        # widening a rule until it swallows its neighbours -- and the overlap
+        # widening a rule until it swallows its neighbours, and the overlap
         # gate still rejects it if it does.
         cap = (cfg or load()["rule_engine"]).get("max_tolerance_paise", 10)
         stored = validate_predicate(row["predicate_json"])
@@ -111,7 +111,7 @@ def intake(conn, batch_id, predicate, confidence, case_id=None, cfg=None) -> dic
 # --------------------------------------------------------------------- gate
 def check_gate(conn, proposal, cfg=None) -> tuple[bool, dict]:
     """All four gates, evaluated in full so the audit trail records every
-    reason a rule failed, not merely the first."""
+    reason a rule failed, not just the first."""
     cfg = cfg or load()["rule_engine"]
     pred = json.loads(proposal["predicate_json"])
     report = {"predicate": pred, "gates": {}}
@@ -134,7 +134,7 @@ def check_gate(conn, proposal, cfg=None) -> tuple[bool, dict]:
 
     # Is this rule WRONG, or is it RIGHT about noisy data? Both look like a
     # contradicted record, and counting them the same rejected four correct
-    # fee formulas induced by a live model -- each missed by a paise or two of
+    # fee formulas induced by a live model, each missed by a paise or two of
     # rounding drift on a single row. The magnitude separates them cleanly: a
     # wrong rate misses by thousands of paise, drift by single digits. So a
     # contradiction is only fatal when it is bigger than the noise band.
@@ -245,7 +245,7 @@ def soft_gates(report) -> set:
 
 def review_pending(conn, batch_id=None, cfg=None) -> dict:
     """Run the gate over every pending proposal. Rejections are as much the
-    point as promotions -- they are the evidence the gate is load-bearing."""
+    point as promotions, they are the evidence the gate is load-bearing."""
     cfg = cfg or load()["rule_engine"]
     promoted, rejected, still_pending = [], [], []
     for p in conn.execute("SELECT * FROM rule_proposals WHERE status='pending'"
@@ -254,7 +254,7 @@ def review_pending(conn, batch_id=None, cfg=None) -> dict:
         if passed:
             promoted.append(promote(conn, p, report))
         elif set(report["failed_gates"]) <= soft_gates(report):
-            # not enough evidence *yet* -- leave it pending for a later batch
+            # not enough evidence *yet*, leave it pending for a later batch
             still_pending.append(p["proposal_id"])
         else:
             reject(conn, p, report)
@@ -340,7 +340,7 @@ def plain_english(predicate: dict) -> str:
     if t == "fee_formula":
         p = predicate.get("params", {})
         if not p.get("flat_paise") and not p.get("rate"):
-            return (f"{who}: settles at par -- no MDR is deducted at all, "
+            return (f"{who}: settles at par, no MDR is deducted at all, "
                     f"so there is no GST either")
         fee = (f"a flat {p['flat_paise']} paise" if "flat_paise" in p
                else f"{p.get('rate', 0) * 100:g}% of gross")

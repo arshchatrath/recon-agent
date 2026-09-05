@@ -153,7 +153,7 @@ def test_the_backtest_rejects_a_rule_that_contradicts_history(conn):
 
 
 def test_insufficient_backtest_support_blocks_promotion(conn):
-    """A rule nothing in history exercises is unproven, not proven safe -- and
+    """A rule nothing in history exercises is unproven, not proven safe, and
     not proven WRONG either, so it stays pending rather than being rejected.
     Rejecting it would be permanent: a refund rule proposed before any fee rule
     exists has no expected net to compare against, and would be killed off
@@ -186,7 +186,7 @@ def test_a_rule_rejected_for_lack_of_evidence_can_still_be_promoted_later(conn):
 def test_a_rule_overlapping_an_active_one_is_rejected(conn):
     """Two timing windows for the same instrument that could both fire on one
     record. (Fee formulas differing only in tolerance are now merged as one
-    hypothesis, so they cannot reach this gate -- see the tolerance tests.)"""
+    hypothesis, so they cannot reach this gate, see the tolerance tests.)"""
     ingest_batch(conn, "1")
     conn.execute("INSERT INTO rules (rule_type,scope_instrument,predicate_json,"
                  "priority,status,promoted_at) VALUES"
@@ -262,7 +262,7 @@ def test_a_rule_with_too_few_applications_is_not_judged_yet(conn):
 # ------------------------------------------------------- the whole loop
 class Proposer:
     """A stand-in reasoner that proposes the true economics for whatever
-    instrument it is shown -- i.e. a model doing its job. It is never told the
+    instrument it is shown, i.e. a model doing its job. It is never told the
     answer for an instrument it has not seen a case for."""
 
     def __init__(self):
@@ -318,7 +318,7 @@ def test_the_induced_upi_rule_is_actually_zero_fee(conn):
 
 
 def test_a_bad_proposal_is_rejected_while_good_ones_are_promoted(conn):
-    """Both outcomes in one run -- the audit log has to show the gate working
+    """Both outcomes in one run, the audit log has to show the gate working
     in both directions."""
     ingest_batch(conn, "1")
     seed_matches(conn, "UPI", limit=10)
@@ -396,7 +396,7 @@ def test_merging_lets_a_converging_model_actually_promote(conn):
 
 
 def test_different_formulas_still_stay_separate(conn):
-    """Merging must not collapse genuinely different claims."""
+    """Merging must not collapse different claims."""
     intake(conn, "1", fee(instrument="UPI", rate=0.02), 0.9)
     intake(conn, "1", fee(instrument="UPI", rate=0.03), 0.9)
     conn.commit()

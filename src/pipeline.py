@@ -34,7 +34,7 @@ from src.subset_sum import disambiguate, solve
 log = logging.getLogger("pipeline")
 
 # A payout hits the bank on, or right beside, the day it settled. Widening
-# this does not find more answers -- it floods the subset-sum pool with
+# this does not find more answers, it floods the subset-sum pool with
 # settlements from neighbouring payout batches, and coincidental sums start
 # colliding with the real one. 1 day, not 3.
 BANK_POOL_WINDOW_DAYS = 1
@@ -105,7 +105,7 @@ class BatchRun:
 
     def explain_leg(self, settlement):
         """Is this settlement row internally consistent with a learned fee
-        schedule -- its own net against its own gross? Used for split legs,
+        schedule, its own net against its own gross? Used for split legs,
         where there is no full order to compare against."""
         for r in self.rules.of_type("fee_formula", settlement["instrument"]):
             if evaluate(r.predicate, {}, settlement, self.rules) is True:
@@ -159,7 +159,7 @@ class BatchRun:
 
         A fee rule speaks to a full settlement, so a leg covering 40% of an
         order is INAPPLICABLE to it and the assignment solver correctly
-        declines -- which left every split payout as an exception and was the
+        declines, which left every split payout as an exception and was the
         single largest cause of missed recall.
 
         The constraint that identifies a split is exact and needs no new rule:
@@ -247,7 +247,7 @@ class BatchRun:
     def run_bank_leg(self, settlements, credits):
         """Work out which settlements make up each bulk bank credit.
 
-        Cheap structural join first, expensive search second -- the same order
+        Cheap structural join first, expensive search second, the same order
         blocking.py uses. A payout batch is a real grouping the aggregator
         gives us (settlement_batch_id is in settlements.csv); what nobody tells
         us is which UTR it arrived under, because the narration deliberately
@@ -258,7 +258,7 @@ class BatchRun:
         to, because a row is missing, split, or reversed. Running the search on
         every credit instead floods a 30-row pool with settlements from four
         neighbouring payout batches, and coincidental sums collide with the
-        real one -- which is how this leg produced 15 confident false positives
+        real one, which is how this leg produced 15 confident false positives
         before the pool was narrowed and this join put in front of it.
         """
         groups: dict[str, list] = {}
@@ -327,7 +327,7 @@ class BatchRun:
     def update_rule_stats(self):
         """Score each rule that fired this batch, for the retirement gate.
 
-        There is no ground truth here -- reading it would be cheating -- so the
+        There is no ground truth here, reading it would be cheating, so the
         signal has to be a contradiction the data itself exposes: a settlement
         claimed by two different orders, or an order bound to more settlements
         than a split payout allows. An over-broad rule fires on pairs it should
@@ -336,7 +336,7 @@ class BatchRun:
         What we deliberately do NOT count as an error is a match the bank leg
         happened not to confirm. Subset-sum does not resolve every credit, and
         scoring a rule down for another leg's silence retires correct rules --
-        which is precisely what an earlier version of this method did, tanking
+        which is exactly what an earlier version of this method did, tanking
         the match rate in batch 3. Absence of confirmation is not evidence of
         error.
         """
@@ -406,7 +406,7 @@ class BatchRun:
             # confidence floor, and running it live showed exactly why that was
             # wrong: 39 of 39 false positives in batch 1 came from this path and
             # none from any deterministic one. The model was confirming that a
-            # settlement's own arithmetic was internally consistent -- which
+            # settlement's own arithmetic was internally consistent, which
             # proves the aggregator can subtract and nothing about the pairing --
             # and reporting confidence 1.0 while doing it. One match even
             # reasoned that the amount was "significantly different" and matched
@@ -415,13 +415,13 @@ class BatchRun:
             # A confidence floor cannot fix that; the model is confidently
             # wrong, not hesitantly wrong. By our own 50:1 cost model those 39
             # false positives cost 1,950 against the 68 exceptions (68) that
-            # refusing produces -- so declining is roughly 28x cheaper. And the
+            # refusing produces, so declining is roughly 28x cheaper. And the
             # README already claimed the LLM never decides a match. The code was
             # simply more permissive than the principle.
             note = v.reasoning if v.usable else v.residual_explanation
             if v.usable:
                 note = (f"model believes this matches {v.matched_candidate_id} "
-                        f"(confidence {v.confidence:.2f}) -- ADVISORY, not "
+                        f"(confidence {v.confidence:.2f}). ADVISORY, not "
                         f"applied: {v.reasoning}")
                 self.counts["llm_advisory"] += 1
             self.conn.execute(
@@ -459,8 +459,8 @@ class BatchRun:
         min_examples = cfg.get("min_examples_per_sample", 3)
         for rule_type, scope in self.DISCOVERABLE.items():
             # A fee or a settlement lag differs by instrument. A partial refund
-            # does not -- it is the same phenomenon whichever way the customer
-            # paid -- so asking per instrument just splits an already thin pool
+            # does not, it is the same phenomenon whichever way the customer
+            # paid, so asking per instrument just splits an already thin pool
             # four ways and nothing ever reaches enough examples.
             targets = self.instruments_seen() if scope == "per_instrument" else [ALL]
             for instrument in targets:
@@ -495,7 +495,7 @@ class BatchRun:
         if rule_type == "timing_window":
             # Only orders settled in ONE payout. A split's later legs settle a
             # day or more after the first, so including them makes different
-            # samples observe different windows -- (2,2) here, (2,3) there --
+            # samples observe different windows, (2,2) here, (2,3) there --
             # and the proposals fragment across fingerprints instead of
             # accumulating. The base settlement rhythm is what is being asked
             # about; a split payout is a separate phenomenon.
@@ -511,7 +511,7 @@ class BatchRun:
                    "   WHERE batch_id=m.batch_id AND left_type='order'"
                    "   AND right_type='settlement'"
                    "   GROUP BY left_id HAVING COUNT(*) = 1)")
-        else:   # refund_pattern -- the ledger says these were partly refunded
+        else:   # refund_pattern, the ledger says these were partly refunded
             sql = ("SELECT o.order_id, o.order_datetime, o.gross_amount_paise,"
                    " o.status, s.instrument, s.settlement_txn_id,"
                    " s.settled_datetime, s.net_amount_paise FROM settlements s"

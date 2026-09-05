@@ -2,7 +2,7 @@
 
 Rationale: floats cannot represent 0.1 and silently drift; a reconciliation
 system that drifts by a paise per row is worse than useless. Rounding is
-banker's (ROUND_HALF_EVEN) everywhere, applied via Decimal -- Python's
+banker's (ROUND_HALF_EVEN) everywhere, applied via Decimal. Python's
 built-in round() on floats inherits binary-representation errors
 (round(2.675, 2) == 2.67) and is not safe for money.
 """

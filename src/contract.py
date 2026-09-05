@@ -1,6 +1,6 @@
 """Contract compliance: were you charged what you agreed to?
 
-This is the point of the system, and it is worth being precise about why.
+This is the point of the system, and the reason matters.
 
 An earlier version induced the fee schedule from settlement data and matched
 against what it found. That is backwards. If the aggregator quietly bills 2.1%
@@ -10,8 +10,8 @@ transaction as correct. It launders the leakage into the books and reports
 100% precision while doing it.
 
 Reconciliation exists to verify that what happened matches *what was agreed*.
-So the contract is an INPUT -- the merchant has it, it is in their signed
-agreement -- and the settlement data is the thing under audit.
+So the contract is an INPUT. The merchant has it; it is in their signed
+agreement. The settlement data is the thing under audit.
 
 Two independent readings of what actually happened:
 
@@ -34,7 +34,7 @@ __all__ = ["contract_terms", "contract_fee", "observed_schedule",
 
 
 def contract_terms(cfg=None) -> dict:
-    """The merchant's agreed rates. Legitimately known -- it is their contract."""
+    """The merchant's agreed rates. Legitimately known, it is their contract."""
     return (cfg or load()).get("contract", {})
 
 
@@ -158,8 +158,8 @@ def leakage_report(conn, batch_id=None, cfg=None) -> dict:
     """Transaction by transaction: fee charged vs fee agreed.
 
     This is the number a finance team actually wants. Not "did the records
-    match" -- they can match perfectly while you are being overcharged on every
-    one of them -- but "how much was taken that the contract did not allow".
+    match", they can match perfectly while you are being overcharged on every
+    one of them, but "how much was taken that the contract did not allow".
     """
     terms = contract_terms(cfg)
     noise = (cfg or load()).get("rule_engine", {}).get("noise_band_paise", 5)

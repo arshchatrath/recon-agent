@@ -7,9 +7,9 @@ so that the pipeline cannot accidentally be marking its own homework.
 The number that matters is not the match rate. It is the false-positive count.
 A wrong match silently corrupts the books and is found months later by an
 auditor; an open exception costs a controller two minutes. The cost-weighted
-error score prices that at 50:1, and every design decision upstream -- the
+error score prices that at 50:1, and every design decision upstream, the
 unmatched sink in the assignment solver, the ambiguity report in subset-sum,
-the backtest gate, the model's licence to abstain -- is that ratio expressed
+the backtest gate, the model's licence to abstain, is that ratio expressed
 in code.
 """
 from __future__ import annotations

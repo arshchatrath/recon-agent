@@ -195,7 +195,7 @@ def test_the_agent_calls_a_tool_then_answers(populated):
 
 def test_the_demo_question_reaches_the_induced_rules(populated):
     """'What have you learned about this merchant?' must be answerable purely
-    from what the system induced -- this is the pitch's best moment."""
+    from what the system induced, this is the pitch's best moment."""
     script = [
         [Block(type="tool_use", id="t1", name="list_learned_rules", input={})],
         answer("Induced from the data. Sources: rules 2,3,4,5"),

@@ -1,6 +1,6 @@
 """Bulk-credit disaggregation: which settlements make up this one bank credit?
 
-Bitset DP over Python big integers -- `reachable |= reachable << amount` tests
+Bitset DP over Python big integers, `reachable |= reachable << amount` tests
 every partial sum a machine word at a time, which is fast enough that the
 interesting problem is not speed but *ambiguity*. If more than one subset hits
 the target, saying so is the whole job; picking one at random is how a

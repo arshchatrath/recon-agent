@@ -1,7 +1,7 @@
 """SQLite access. Raw SQL, no ORM.
 
 The connection has foreign keys on. Money columns are INTEGER and every write
-path here passes Python ints straight through -- nothing converts via float.
+path here passes Python ints straight through, nothing converts via float.
 """
 from __future__ import annotations
 
@@ -76,7 +76,7 @@ def ingest_batch(conn: sqlite3.Connection, batch_id: str,
                  data_dir: Path | None = None) -> dict[str, int]:
     """Load one batch's three source CSVs. Idempotent (INSERT OR REPLACE).
 
-    truth.csv is deliberately not read here -- only metrics.py may read it.
+    truth.csv is not read here, only metrics.py may read it.
     """
     d = Path(data_dir) if data_dir else (
         DATA_DIR / ("adversarial" if batch_id == "adversarial" else f"batch_{batch_id}"))

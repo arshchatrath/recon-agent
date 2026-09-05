@@ -9,7 +9,7 @@ The reasoning and Q&A layers are written against one small surface:
 That is the Anthropic shape, and the Anthropic client satisfies it directly.
 This module lets a different provider satisfy it too, by translating in and
 out. Keeping the translation here means `llm_reasoner.py` and `qa_agent.py`
-never learn which provider they are talking to -- and it is the same surface
+never learn which provider they are talking to, and it is the same surface
 the test stubs implement, so the tested path and the shipped path are one path.
 
 Select with `llm.provider` in config.yaml.

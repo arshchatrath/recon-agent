@@ -37,7 +37,7 @@ Absolute rules:
 3. If the tools do not contain the answer, reply with exactly this sentence:
    I don't have that in the reconciled data
    Then stop. Do not guess, and do not offer a plausible figure with a \
-   caveat -- a caveated wrong number is still a wrong number.
+   caveat, a caveated wrong number is still a wrong number.
 4. Amounts come back as integer paise plus a formatted rupee string. Quote the \
    formatted string. Never convert paise to rupees yourself.
 5. This system learned the merchant's fee and timing structure from the data \
@@ -150,7 +150,7 @@ class SettlementQA:
     def list_exceptions(self, status="open", min_money_at_risk_paise=0,
                         batch_id=None, limit=20) -> dict:
         """Triage order. A heap because we want the top N by money at risk
-        without sorting the whole queue -- in production this table is the
+        without sorting the whole queue, in production this table is the
         thing that grows."""
         sql = "SELECT * FROM exceptions WHERE money_at_risk_paise >= ?"
         params = [int(min_money_at_risk_paise or 0)]
@@ -343,7 +343,7 @@ class SettlementQA:
                     type(e).__name__ in ("AuthenticationError",
                                          "PermissionDeniedError")
                 note = ("Set ANTHROPIC_API_KEY to enable chat. The reconciled "
-                        "data itself is available without it -- try "
+                        "data itself is available without it, try "
                         "`python -m src.metrics --report`."
                         if unauthenticated else
                         "The reasoning service is unreachable right now.")

@@ -41,7 +41,7 @@ class WorkingCalendar:
         self._before[n] = len(self._working_dates)
         self._holidays = holidays
 
-    # -- internals -------------------------------------------------------
+    #, internals -------------------------------------------------------
     def _offset(self, d: date) -> int:
         if not (self.start <= d <= self.end):
             raise ValueError(f"{d} outside calendar range {self.start}..{self.end}")
@@ -51,7 +51,7 @@ class WorkingCalendar:
         """Position in _working_dates of the first working day >= d."""
         return self._before[self._offset(d)]
 
-    # -- public API ------------------------------------------------------
+    #, public API ------------------------------------------------------
     def is_working_day(self, d: date) -> bool:
         self._offset(d)  # range check
         return d.weekday() < 5 and d not in self._holidays
@@ -64,7 +64,7 @@ class WorkingCalendar:
         """d plus n working days.
 
         A non-working d rolls forward to the next working day first, and the
-        roll itself does not consume one of the n days -- so a Saturday order
+        roll itself does not consume one of the n days, so a Saturday order
         at T+1 settles Tuesday, not Monday. This keeps the observed lag
         uniform per instrument, which is what makes it learnable at all.
         """

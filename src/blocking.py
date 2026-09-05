@@ -103,7 +103,7 @@ def candidate_pairs(orders, settlements, amount_tolerance=None,
     """Stage 2. Pairs an order could plausibly belong to, by amount then date.
 
     The amount window is deliberately wide (`gross_slack_ratio`) because at the
-    start we do not know the fee structure -- a settlement's net can sit well
+    start we do not know the fee structure, a settlement's net can sit well
     below its gross. That is the price of not being told the answer.
     """
     cfg = load()["matching"]
@@ -150,5 +150,5 @@ def components(pairs, extra_nodes=()):
 
 
 def size_distribution(comps) -> dict[int, int]:
-    """Component size histogram -- logged every run; the pitch wants this."""
+    """Component size histogram, logged every run; the pitch wants this."""
     return dict(sorted(Counter(len(o) + len(s) for o, s in comps).items()))

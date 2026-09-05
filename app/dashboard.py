@@ -63,7 +63,7 @@ def conn():
     """A fresh connection per rerun, deliberately NOT cached.
 
     Streamlit reruns the script on a different thread each time, and a sqlite3
-    connection may only be used from the thread that made it -- caching one
+    connection may only be used from the thread that made it, caching one
     raises ProgrammingError on the second interaction.
     """
     return get_conn(db.DB_PATH)
@@ -115,7 +115,7 @@ if not all_batches:
 # ------------------------------------------------------------------- sidebar
 with st.sidebar:
     st.markdown("### Reconciliation Agent")
-    st.caption("Three sources, one truth — and proof you were charged what you "
+    st.caption("Three sources, one truth, and proof you were charged what you "
                "agreed to.")
     batch = st.selectbox("Batch", all_batches, index=len(all_batches) - 1)
     st.divider()
@@ -145,7 +145,7 @@ deviating = [r["instrument"] for r in rows if r["agrees"] is False]
 if lk["total_leaked_paise"] > 0:
     st.markdown(
         f'<div class="banner bad">In batch {batch} the aggregator charged '
-        f'<b>{lk["total_leaked"]}</b> more than your contract allows — across '
+        f'<b>{lk["total_leaked"]}</b> more than your contract allows, across '
         f'{lk["transactions_overcharged"]} of {lk["transactions_checked"]} '
         f'transactions, on {", ".join(deviating)}.</div>',
         unsafe_allow_html=True)
@@ -153,7 +153,7 @@ elif s["open_exceptions"]:
     st.markdown(
         f'<div class="banner good">Every fee in batch {batch} matches the '
         f'contracted rates. <b>{s["open_exceptions"]}</b> records still need a '
-        f'human — see <b>Exceptions</b>.</div>', unsafe_allow_html=True)
+        f'human, see <b>Exceptions</b>.</div>', unsafe_allow_html=True)
 else:
     st.markdown('<div class="banner good">Fully reconciled. Every fee matches '
                 'contract and nothing is outstanding.</div>',
@@ -175,14 +175,14 @@ tab_audit, tab_learn, tab_rules, tab_exc, tab_ask = st.tabs(
 # ------------------------------------------------------------ contract audit
 with tab_audit:
     st.markdown("### Contracted rates vs what was actually deducted")
-    st.caption("The contract is an input — it is in the merchant's signed "
+    st.caption("The contract is an input, it is in the merchant's signed "
                "agreement. The settlement data is what is under audit. Learning "
                "the rates from the aggregator's own output would quietly accept "
                "whatever they charged.")
 
     st.dataframe(pd.DataFrame([{
         "instrument": r["instrument"], "contracted": r["contracted"],
-        "observed in data": r.get("observed", "—"),
+        "observed in data": r.get("observed", "-"),
         "transactions": r["samples"],
         "verdict": ("matches contract" if r["agrees"]
                     else "no data" if r["agrees"] is None
@@ -210,7 +210,7 @@ with tab_audit:
             tooltip=["batch_id", "fee_leakage_paise"])
             .properties(height=240).configure_view(strokeWidth=0))
         st.altair_chart(bars, width='stretch')
-        st.caption("A rate change reads as a step — which is the question a "
+        st.caption("A rate change reads as a step, which is the question a "
                    "controller actually asks.")
 
 # --------------------------------------------------------------- the learning
@@ -268,9 +268,9 @@ with tab_rules:
         lib.append({
             "rule": plain_english(json.loads(row["predicate_json"])),
             "source": "induced" if row["promoted_from_proposal_id"] else "seeded",
-            "backtest": f"{bt.get('precision', 0):.0%}" if bt else "—",
-            "agreed": str(bt.get("correct_matches", "—")),
-            "contradicted": str(bt.get("wrong_matches", "—")),
+            "backtest": f"{bt.get('precision', 0):.0%}" if bt else "-",
+            "agreed": str(bt.get("correct_matches", "-")),
+            "contradicted": str(bt.get("wrong_matches", "-")),
             "applied": row["times_applied"]})
     st.dataframe(pd.DataFrame(lib), width='stretch', hide_index=True)
     st.caption("Nothing here was configured. Every 'induced' row was proposed "
@@ -278,7 +278,7 @@ with tab_rules:
                "confidence floor, and a replay against all previously-resolved "
                "records.")
 
-    with st.expander("Rules the gate BLOCKED — and why", expanded=True):
+    with st.expander("Rules the gate BLOCKED, and why", expanded=True):
         rejected = c.execute(
             "SELECT * FROM rule_proposals WHERE status='rejected'"
             " ORDER BY occurrence_count DESC LIMIT 15").fetchall()
@@ -297,7 +297,7 @@ with tab_rules:
 
 # ----------------------------------------------------------- exception queue
 with tab_exc:
-    st.markdown(f"### {s['open_exceptions']} records need a human — "
+    st.markdown(f"### {s['open_exceptions']} records need a human, "
                 f"{format_paise(s['exception_money_paise'])} under review")
     st.caption("Sorted by money at risk. This is the actual work list.")
     rows_e = c.execute(
@@ -311,12 +311,12 @@ with tab_exc:
             "reason": e["reason_code"],
             "money at risk": format_paise(e["money_at_risk_paise"]),
             "considered": ", ".join(
-                str(x) for x in json.loads(e["candidates_json"] or "[]")[:2]) or "—",
+                str(x) for x in json.loads(e["candidates_json"] or "[]")[:2]) or "-",
             "detail": e["reason_text"]} for e in rows_e]),
             width='stretch', hide_index=True)
-        st.caption("`NO_SETTLEMENT` — the order exists but no money arrived. "
-                   "`ORPHAN_SETTLEMENT` — a payout claims an order that is not "
-                   "in the ledger. `FEE_UNEXPLAINED` — no learned rule accounts "
+        st.caption("`NO_SETTLEMENT`, the order exists but no money arrived. "
+                   "`ORPHAN_SETTLEMENT`, a payout claims an order that is not "
+                   "in the ledger. `FEE_UNEXPLAINED`, no learned rule accounts "
                    "for the deduction.")
 
 # ------------------------------------------------------------------- the chat
@@ -348,7 +348,7 @@ with tab_ask:
                                + "</span>")
             except Exception as e:
                 answer = (f"Could not reach the model ({type(e).__name__}). Set "
-                          f"an API key to enable chat — every other tab works "
+                          f"an API key to enable chat, every other tab works "
                           f"without one.")
             st.markdown(answer, unsafe_allow_html=True)
             st.session_state.chat.append(("assistant", answer))

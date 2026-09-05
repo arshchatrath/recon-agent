@@ -39,7 +39,7 @@ def test_tolerance_window_accepts_a_near_miss_and_prefers_the_exact_hit():
 
 
 def test_coincidental_subset_is_reported_as_ambiguous_not_guessed():
-    # 100+200+300 == 150+450 == 600: two genuinely valid answers.
+    # 100+200+300 == 150+450 == 600: two valid answers.
     pool = [("A1", 100), ("A2", 200), ("A3", 300), ("B1", 150), ("B2", 450)]
     r = solve(600, pool, delta=0)
     assert r.ambiguous, r.solutions

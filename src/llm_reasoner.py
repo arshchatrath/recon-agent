@@ -72,7 +72,7 @@ You have exactly two responsibilities:
 1. Propose a machine-checkable rule that explains the case AND would hold for \
    other cases like it. Use check_rule_against_history to test it against \
    already-resolved records BEFORE you propose it. If the check shows any \
-   wrong_matches, your rule is wrong -- revise it or propose nothing.
+   wrong_matches, your rule is wrong, revise it or propose nothing.
 2. Say which candidate, if any, this record matches, and explain why.
 
 Hard requirements:
@@ -80,7 +80,7 @@ Hard requirements:
 - Never assert a number you have not obtained from the calculate tool. Fees are \
   integer paise; rounding matters at the paise.
 - "insufficient_information" is a correct, expected and valued answer. Use it \
-  whenever the evidence genuinely does not settle the question. A wrong match \
+  whenever the evidence does not settle the question. A wrong match \
   silently corrupts a ledger; an unresolved exception costs a human two \
   minutes. Abstaining is roughly fifty times cheaper than guessing.
 - Only propose a rule you believe generalises. One case is an anecdote. If the \
@@ -91,12 +91,12 @@ Hard requirements:
   fraction of rows, so a rule with tolerance_paise 0 will be contradicted by \
   otherwise-correct records and rejected. Propose a small non-zero tolerance \
   (a handful of paise) unless you have a reason not to. This is about noise in \
-  the data, not about the fee itself -- do not widen the tolerance to make a \
+  the data, not about the fee itself, do not widen the tolerance to make a \
   wrong rate fit, because a wide tolerance that overlaps another rule is \
   rejected too.
 
 Some requests carry a "focus" field and a list of "resolved_examples" instead
-of an unmatched record. Those are not asking you to match anything -- the
+of an unmatched record. Those are not asking you to match anything, the
 records are already reconciled. They are asking: looking at these examples,
 what rule of the focused type describes them? Answer with verdict
 "no_match" (there is no match question) and put your answer in proposed_rule.
@@ -107,11 +107,11 @@ Rule predicate forms you may propose, and nothing else:
                    or {"flat_paise": <int>, "gst": <0..1>}
                    meaning net = gross - fee - round(fee * gst)
   timing_window    params {"min_working_days": <int>, "max_working_days": <int>}
-  refund_pattern   params {} -- the net falls short of the fee-implied net
+  refund_pattern   params {}, the net falls short of the fee-implied net
   narration_pattern params {"regex": "<one capture group>"}
 
 When you have finished calling tools, your FINAL reply must be one JSON object
-and nothing else -- no prose around it, no markdown fence:
+and nothing else, no prose around it, no markdown fence:
 
 {"verdict": "match" | "no_match" | "insufficient_information",
  "matched_candidate_id": "<id>" | null,
@@ -132,7 +132,7 @@ def _strip_fence(text: str) -> str:
     """Unwrap ```json ... ``` and any prose either side of the object.
 
     A schema-constrained provider never needs this; one that cannot take a
-    response schema alongside tool definitions -- Gemini, for instance -- often
+    response schema alongside tool definitions. Gemini, for instance, often
     does. Cheaper than a retry, and the retry still backs it up.
     """
     t = text.strip()
@@ -193,7 +193,7 @@ TOOLS = [
                     "already-resolved record. Returns correct_matches, "
                     "wrong_matches, support and counterexamples. Any "
                     "wrong_matches means the rule contradicts a record we have "
-                    "already resolved, so it will be rejected -- check before "
+                    "already resolved, so it will be rejected, check before "
                     "you propose.",
      "input_schema": {"type": "object",
                       "properties": {"predicate_json": {"type": "string"}},
@@ -318,7 +318,7 @@ class LLMReasoner:
                     "content": "Your previous reply did not parse as the "
                                "required JSON object. Reply with that object "
                                "and nothing else."})
-            except Exception as e:                    # network, 429, 5xx, ...
+            except Exception as e:                    # network, 429, 5xx...
                 v.error = f"{type(e).__name__}: {e}"
                 if self._is_unrecoverable(e):
                     self.disabled = v.error
@@ -335,8 +335,8 @@ class LLMReasoner:
         v.latency_seconds = time.time() - t0
 
         # Every retry for this case was spent and none worked. If that keeps
-        # happening the problem is not this case -- it is the service (an
-        # exhausted daily quota, a sustained outage) -- and grinding the rest
+        # happening the problem is not this case, it is the service (an
+        # exhausted daily quota, a sustained outage), and grinding the rest
         # of the batch through the full backoff achieves nothing. A run that
         # burned 48 minutes to make 17 successful calls and 40 quota failures
         # is what motivated this.
@@ -349,7 +349,7 @@ class LLMReasoner:
 
     def _converse(self, messages, v: LLMVerdict) -> LLMVerdict:
         """Manual tool loop. Manual rather than the SDK tool runner because we
-        need per-call token accounting -- the avoided-call count is a headline
+        need per-call token accounting, the avoided-call count is a headline
         metric and it has to be measured, not estimated."""
         for _ in range(8):                            # tool-loop safety valve
             resp = self.client.messages.create(
@@ -434,7 +434,7 @@ class LLMReasoner:
 
     def _apply_floor(self, v: LLMVerdict) -> LLMVerdict:
         """Below the confidence floor the verdict is discarded regardless of
-        what the model said. The rule proposal survives -- proposing is cheap
+        what the model said. The rule proposal survives, proposing is cheap
         and gated downstream; asserting a match is not."""
         if v.verdict == "match" and v.confidence < self.cfg["confidence_floor"]:
             log.info("confidence %.2f below floor; downgrading to exception",
