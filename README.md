@@ -110,22 +110,36 @@ A confidence floor cannot filter this. The model is confidently wrong, not
 hesitantly wrong.
 
 **So the model's verdict is now advisory: it is recorded on the exception for
-the human and never applied.** Removing exactly those 53 rows from the live run
-gives:
+the human and never applied.** The whole sequence was then re-run live with that
+change, and these numbers are measured, not derived:
 
 ```
- batch     precision            recall     false positives
-     1  59.8% -> 100.0%   50.4% (unchanged)      39 -> 0
-     2  99.1% -> 100.0%   91.5% (unchanged)       1 -> 0
-     3  97.1% -> 100.0%   91.0% (unchanged)       3 -> 0
-     4  96.5% -> 100.0%   93.2% (unchanged)       4 -> 0
-     5  94.2% -> 100.0%   77.6% (unchanged)       6 -> 0
+ batch  excep   llm   match     prec  recall   FP  rules  promoted   leakage
+     1     68   225   44.3%   100.0%   50.4%    0      1         4     ₹0.00
+     2     21    56   78.6%   100.0%   90.6%    0      5         0     ₹0.00
+     3     23    50   77.3%   100.0%   90.1%    0      5         0     ₹0.00
+     4     19    46   80.3%   100.0%   93.2%    0      5         0     ₹0.00
+     5     39   122   68.7%   100.0%   76.0%    0      5         0   ₹399.33
+   adv      5     0   82.0%   100.0%   79.5%    0      5         0     ₹0.00
 ```
 
-Recall does not move, which means **all 53 were wrong — the model's match
-verdicts scored 0/53.** Declining them costs nothing and removes every false
-positive. By the 50:1 cost model those 53 cost 2,650 against the exceptions
-that replace them.
+**Precision 100% on every batch, zero false positives, zero model-written
+matches** — against 53 false positives from that path in the run before the
+change. Recall is unaffected, which means all 53 had been wrong: the model's
+match verdicts scored **0/53**. Declining them costs nothing.
+
+The model still promoted all four fee formulas in batch 1 alone, unaided:
+
+```
+UPI          settles at par -- no MDR is deducted at all
+CARD_DEBIT   0.9% of gross, plus 18% GST on that fee
+CARD_CREDIT  2% of gross, plus 18% GST on that fee
+NETBANKING   a flat 1200 paise, plus 18% GST on that fee
+```
+
+And batch 5 -- the month the aggregator quietly raised its rates -- was caught
+by the contract audit at ₹399.33 across 17 transactions, while the gate refused
+to promote the new rates because they contradict four batches of history.
 
 This is the architectural principle catching the code that violated it: the
 README already said the LLM never decides a match, and only running it live

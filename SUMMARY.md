@@ -173,9 +173,23 @@ rule 3  CARD_CREDIT  {"rate": 0.02,  "gst": 0.18}  tol=3
    occurrence 3/3  confidence 1.0  backtest support=8 correct=8 wrong=0 precision=1.000
 ```
 
-The headline table above is stub-driven and reported separately from this, on
-purpose: a one-batch live run cut short by free-tier quota is not the same
-evidence as the full sequence, and merging them would overstate it.
+**The full sequence has since been run live, end to end, post-fix** (six
+batches, 36 minutes):
+
+```
+ batch  excep   llm   match     prec  recall   FP  promoted   leakage
+     1     68   225   44.3%   100.0%   50.4%    0         4     ₹0.00
+     2     21    56   78.6%   100.0%   90.6%    0         0     ₹0.00
+     3     23    50   77.3%   100.0%   90.1%    0         0     ₹0.00
+     4     19    46   80.3%   100.0%   93.2%    0         0     ₹0.00
+     5     39   122   68.7%   100.0%   76.0%    0         0   ₹399.33
+   adv      5     0   82.0%   100.0%   79.5%    0         0     ₹0.00
+```
+
+All four fee formulas induced and promoted in batch 1 alone; precision 100% and
+zero false positives throughout; the batch-5 overcharge caught and priced. The
+stub-driven table above remains as the reproducible-without-a-key result, and
+is reported separately rather than merged.
 
 ---
 
