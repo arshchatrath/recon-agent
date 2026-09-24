@@ -189,3 +189,63 @@ def test_summary_tab_renders_with_a_method_filter(real_db):
     assert not at.exception, [str(e) for e in at.exception]
     shown = " ".join(m.value for m in at.markdown)
     assert "n/a for method filter" in shown
+
+
+# ------------------------------------------------------------ money bridge
+BATCHES = ("1", "2", "3", "4", "5", "adversarial")
+
+
+@pytest.fixture(scope="module")
+def every_batch_no_llm(tmp_path_factory):
+    """Every committed batch, run exactly as `--no-llm` runs it."""
+    from src.pipeline import run_batch
+    conn = reset_db(tmp_path_factory.mktemp("bridge") / "b.db")
+    for b in BATCHES:
+        run_batch(conn, b, use_llm=False)
+    yield conn
+    conn.close()
+
+
+def closes(b):
+    return (b["total_sales"] - b["never_settled"] - b["chargebacks"]
+            - b["refunds"] - b["fees"] - b["gst"] - b["rounding_drift"]
+            + b["orphans"] + b["other"]) == b["net_settled"]
+
+
+@pytest.mark.parametrize("batch", BATCHES)
+def test_the_money_bridge_closes_to_the_paise_on_every_batch(every_batch_no_llm, batch):
+    from app.summary import money_bridge, summary_totals
+    b = money_bridge(every_batch_no_llm, batch)
+    assert closes(b)
+    assert b["other"] == 0, f"unexplained money in batch {batch}: {b}"
+    # the bridge starts and ends on the same numbers the cards show
+    t = summary_totals(every_batch_no_llm, batch)
+    assert (b["total_sales"], b["fees"], b["gst"], b["net_settled"]) == (
+        t["gross_sales_paise"], t["fees_paise"], t["gst_paise"],
+        t["net_settled_paise"])
+
+
+@pytest.mark.parametrize("instrument", ["UPI", "CARD_CREDIT", "CARD_DEBIT",
+                                        "NETBANKING"])
+def test_the_money_bridge_still_closes_under_a_method_filter(every_batch_no_llm,
+                                                             instrument):
+    from app.summary import money_bridge, summary_totals
+    b = money_bridge(every_batch_no_llm, "5", instruments=[instrument])
+    assert closes(b) and b["other"] == 0
+    assert summary_totals(every_batch_no_llm, "5",
+                          instruments=[instrument])["bank_received_paise"] is None
+
+
+def test_the_bridge_sentence_walks_from_sales_to_settled(every_batch_no_llm):
+    from app.summary import bridge_sentence, money_bridge
+    s = bridge_sentence(money_bridge(every_batch_no_llm, "5"))
+    assert s.startswith("₹17.28L sold") and s.endswith("₹14.11L settled")
+    assert "never settled" in s and "refunded" in s and "fees and GST" in s
+    assert "unexplained" not in s
+
+
+def test_the_summary_tab_shows_the_bridge_sentence(real_db):
+    at = run_app()
+    assert not at.exception, [str(e) for e in at.exception]
+    assert any(" sold → " in c.value and c.value.endswith(" settled")
+               for c in at.caption)

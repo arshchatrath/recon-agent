@@ -279,7 +279,7 @@ It opens on the latest numbered batch and has **six tabs**:
 
 | Tab | What it shows |
 |---|---|
-| **Summary** | Where the money went: total sales, fees, GST, net settled, received in bank, overcharged vs contract. "Orders reconciled: X of Y". Two charts and a per-payment-method table. |
+| **Summary** | Where the money went: total sales, fees, GST, net settled, received in bank, overcharged vs contract. "Orders reconciled: X of Y". The **money bridge** (a waterfall from total sales down to net settled, with a one-line summary), fees by payment method, and a per-payment-method table. |
 | **Contract audit** | Agreed rate vs actual rate per payment method, and the worst overcharged sales |
 | **How it learned** | Flagged sales and AI calls falling batch by batch, precision staying at 100% |
 | **Rule library** | Rules the AI learned, and suggestions the gate blocked |
@@ -288,10 +288,27 @@ It opens on the latest numbered batch and has **six tabs**:
 
 The sidebar has three **filters for the Summary tab**: payment method, order
 date and status. The totals are worked out in `summary_totals()` in
-[app/summary.py](app/summary.py#L38), kept out of `dashboard.py` so they can be
+[app/summary.py](app/summary.py#L75), kept out of `dashboard.py` so they can be
 tested on their own. If a filter makes a number impossible to know, the card
 says **"n/a"** with a tooltip instead of showing a wrong number (a bank deposit
 mixes all payment methods, so it can't be split by method).
+
+**The money bridge** answers "customers paid ₹17.28 lakh, so why did only
+₹14.11 lakh arrive?" in batch 5. `money_bridge()` in `app/summary.py` works out
+every step from the data:
+
+```
+₹17.28L sold
+  − ₹2.53L never settled   (no payout at all, full refunds, duplicate ledger rows)
+  − ₹28.8K charged back
+  − ₹32.4K refunded        (partial refunds taken out of payouts)
+  − ₹10.9K fees and GST
+  + ₹8.0K settled for orders not in the ledger
+  = ₹14.11L settled
+```
+
+Anything the named steps can't explain goes into an "other" amount, and it is
+₹0 on every batch. A test checks that the steps add up to the paisa.
 
 The page also works on narrow screens (cards stack, the sidebar starts
 collapsed) and in dark mode.
@@ -317,7 +334,7 @@ collapsed) and in dark mode.
 When you run `python -m src.pipeline --batch 1`:
 
 ### Step 1: load the files
-`run_batch()` calls **`ingest_batch()`** in [src/db.py](src/db.py#L124).
+`run_batch()` calls **`ingest_batch()`** in [src/db.py](src/db.py#L132).
 - **Takes:** the batch number.
 - **Does:** reads the three CSV files from `data/batch_1/` and copies the rows
   into the database. The settlements file is in **Razorpay's official
@@ -520,8 +537,8 @@ money did arrive, even though the fee is still unexplained.
 The **suggested rule is saved as a proposal.** The "match" opinion is only
 added as a note on the exception.
 
-**6. The gate.** Batch 1 has 9 credit card sales, so the AI suggests the same
-rule several times. It is tested on past data and passes. **It becomes trusted
+**6. The gate.** Batch 1 has 12 credit card orders (10 of them settled), so the
+AI suggests the same rule several times. It is tested on past data and passes. **It becomes trusted
 rule #5.**
 
 **7. Next batch: no AI needed.** In batch 2, a similar sale (**ORD-2-0002**,
@@ -618,7 +635,8 @@ The model name follows the provider: with `provider: "anthropic"` the code uses
 | **Exceptions are listed, biggest first** | `list_exceptions()` in [qa_agent.py:154](src/qa_agent.py#L154), and the dashboard's Exceptions tab |
 | **Question answers** | `SettlementQA.ask()` in [qa_agent.py:337](src/qa_agent.py#L337) |
 | **Overcharge amount** (net and gross) | `leakage_report()` in [contract.py:157](src/contract.py#L157) |
-| **Summary tab totals and "Orders reconciled"** | `summary_totals()` in [app/summary.py:38](app/summary.py#L38) |
+| **Summary tab totals and "Orders reconciled"** | `summary_totals()` in [app/summary.py:75](app/summary.py#L75) |
+| **Money bridge** (sales → settled, step by step) | `money_bridge()` and `bridge_sentence()` in [app/summary.py](app/summary.py) |
 | **Learned rules in plain English** | `plain_english()` in [rule_engine.py:334](src/rule_engine.py#L334) |
 
 ---
@@ -645,8 +663,8 @@ The model name follows the provider: with `provider: "anthropic"` the code uses
 | [src/qa_agent.py](src/qa_agent.py) | Answers questions about the data using AI. | llm_client, db |
 | [data/](data/) | The fixed synthetic dataset: batches 1-5 plus a tricky adversarial set, each with an answer key (`truth.csv`). | read by db.py; answer keys only by metrics.py |
 | [app/dashboard.py](app/dashboard.py) | The web dashboard (6 tabs). | summary, metrics, contract, qa_agent |
-| [app/summary.py](app/summary.py) | The totals behind the Summary tab, with the filters. | contract, db |
-| [tests/](tests/) | 395 automatic tests. They need no API key. `test_dataset.py` checks the data itself (the maths adds up, Razorpay's column layout, no holidays). | everything |
+| [app/summary.py](app/summary.py) | The totals behind the Summary tab, with the filters, and the money bridge. | contract, db |
+| [tests/](tests/) | 409 automatic tests. They need no API key. `test_dataset.py` checks the data itself (the maths adds up, Razorpay's column layout, no holidays). | everything |
 
 ---
 
@@ -719,7 +737,9 @@ The model name follows the provider: with `provider: "anthropic"` the code uses
    view.
 
 2. **Input files are only partly checked.** The Razorpay reader rejects row
-   types it doesn't understand and refunds whose payment is missing. But:
+   types it doesn't understand, refunds whose payment is missing, and payment
+   methods the contract doesn't cover (like wallet or EMI), naming every one.
+   But:
    - A missing column in the orders or bank file crashes the run.
    - An amount written as "1,234.56" is stored wrongly.
    - A date outside 2024 to 2027 crashes the calendar.
@@ -845,7 +865,7 @@ The model name follows the provider: with `provider: "anthropic"` the code uses
 **10. What if the AI service is down?**
 > Everything else still runs. After 3 failures in a row it stops asking, marks
 > those cases "AI unavailable", and finishes the matching, contract check and
-> scoring. All 395 tests run without an AI key.
+> scoring. All 409 tests run without an AI key.
 
 **11. Is the data real? Does it match what Razorpay actually sends?**
 > The values are synthetic, but the settlement file uses Razorpay's real
@@ -891,11 +911,23 @@ payments make up each bank deposit?**
 
 **New features**
 - OpenRouter support (`llm_client.py`), now the default provider.
-- The dashboard's **Summary** tab with filters (`app/summary.py`).
+- The dashboard's **Summary** tab with filters (`app/summary.py`), and its
+  **money bridge**, which explains every rupee between total sales and net
+  settled (`money_bridge()`).
 - The contract report's gross overcharge and undercharged count
   (`contract.py`).
 - The dashboard works on narrow screens and in dark mode, and opens on the
   latest real batch.
+
+**Checkable results and clearer errors**
+- The recorded live runs are now committed: `db/live_final.db` (the canonical
+  results) and `db/live.db` (the run before the AI's match verdict became
+  advice only). A fresh clone can check every number in the README.
+- A Razorpay file with a payment method the contract doesn't cover (wallet,
+  EMI) now fails with a clear message naming every such method.
+- `python -m src.metrics --report` prints calls per 100 records correctly
+  (34.8, not 34.9, for batch 4), and its summary line compares batch 1 with
+  batch 5 instead of the adversarial set.
 
 **Data**
 - The data generator was removed. The dataset is fixed and committed in
@@ -918,7 +950,7 @@ payments make up each bank deposit?**
   labelled with the run it comes from; new Dashboard and Changelog sections.
 - ARCHITECTURE.md: the AI's match verdict is described as advice only.
 
-Tests: **395**, all passing, none needing an API key.
+Tests: **409**, all passing, none needing an API key.
 
 ---
 
@@ -931,8 +963,11 @@ Tests: **395**, all passing, none needing an API key.
   http://localhost:8501. A good click order: Summary on batch 5 (₹399.33
   overcharged), Contract audit, How it learned, Rule library, then batch 1 for
   the "before" picture.
+- **After any code change, restart the dashboard** (Ctrl+C, then run it
+  again). Refreshing the page reloads `dashboard.py` but not `app/summary.py`,
+  and a stale server shows an ImportError.
 - **The Ask tab** uses your OpenRouter key and costs a little per question.
 - **Close Excel** before running the pipeline. An open CSV is locked and the
   run can't read or write it.
-- `python -m pytest` runs 395 tests, all passing, in about 3.5 minutes. It's a
+- `python -m pytest` runs 409 tests, all passing, in about 3.5 minutes. It's a
   safe thing to show.

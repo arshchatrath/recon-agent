@@ -23,7 +23,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import src.db as db                                       # noqa: E402
 from app.summary import (EXCEPTION, MATCHED, batch_instruments,  # noqa: E402
-                         order_date_range, summary_totals)
+                         bridge_sentence, money_bridge, order_date_range,
+                         summary_totals)
 from src.contract import compare_to_contract, leakage_report  # noqa: E402
 from src.db import get_conn                               # noqa: E402
 from src.metrics import learning_curve, rule_activity, score_batch  # noqa: E402
@@ -236,11 +237,28 @@ with tab_sum:
                "to its settlement. The match rate above counts records, "
                "including settlements the bank confirmed, so the two differ.")
 
-    flow = pd.DataFrame([
-        {"step": s, "rupees": v / 100} for s, v in (
-            ("Gross sales", t["gross_sales_paise"]), ("Fees", t["fees_paise"]),
-            ("GST", t["gst_paise"]), ("Net settled", t["net_settled_paise"]),
-            ("Received in bank", bank)) if v is not None])
+    # Waterfall: each bar runs from the running total before a step to the
+    # running total after it, so the bars close from total sales to net.
+    mb = money_bridge(c, batch, f_instruments, f_from, f_to, f_statuses)
+    steps, level = [("Total sales", 0, mb["total_sales"], "total")], mb["total_sales"]
+    for key, label, sign in (("never_settled", "Never settled", -1),
+                             ("chargebacks", "Charged back", -1),
+                             ("refunds", "Refunded", -1),
+                             ("fees", "Fees", -1), ("gst", "GST", -1),
+                             ("rounding_drift", "Rounding", -1),
+                             ("orphans", "Not in ledger", 1),
+                             ("other", "Other", 1)):
+        # paise of rounding drift would be an invisible bar taking a label
+        if mb[key] and not (key == "rounding_drift" and abs(mb[key]) < 100):
+            steps.append((label, level, level + sign * mb[key],
+                          "addition" if sign * mb[key] > 0 else "deduction"))
+            level += sign * mb[key]
+    steps.append(("Net settled", 0, mb["net_settled"], "total"))
+    if bank is not None:
+        steps.append(("Received in bank", 0, bank, "bank"))
+    flow = pd.DataFrame([{"step": s, "from": lo / 100, "to": hi / 100,
+                          "change": (hi - lo) / 100, "kind": k}
+                         for s, lo, hi, k in steps])
     fm = pd.DataFrame(
         [{"method": r["instrument"], "measure": "Fees",
           "rupees": r["fees_paise"] / 100} for r in t["by_method"]]
@@ -251,15 +269,21 @@ with tab_sum:
     a, b = st.columns(2)
     with a:
         st.altair_chart(
-            alt.Chart(flow, title="Money flow").mark_bar(
-                size=46, cornerRadiusEnd=4).encode(
+            alt.Chart(flow, title="Money flow: total sales to net settled")
+            .mark_bar(size=34).encode(
                 x=alt.X("step:N", sort=None, title=None,
-                        axis=alt.Axis(labelAngle=0)),
-                y=alt.Y("rupees:Q", title="rupees"),
-                color=alt.value(COOL),
-                tooltip=["step", alt.Tooltip("rupees:Q", format=",.2f")])
-            .properties(height=270).configure_view(strokeWidth=0),
+                        axis=alt.Axis(labelAngle=-40, labelOverlap=False)),
+                y=alt.Y("from:Q", title="rupees"), y2="to:Q",
+                color=alt.Color("kind:N", legend=None, scale=alt.Scale(
+                    domain=["total", "deduction", "addition", "bank"],
+                    range=[COOL, MUTED, OK, COOL])),
+                tooltip=["step", alt.Tooltip("change:Q", format=",.2f",
+                                             title="change (₹)"),
+                         alt.Tooltip("to:Q", format=",.2f",
+                                     title="running total (₹)")])
+            .properties(height=300).configure_view(strokeWidth=0),
             width='stretch')
+        st.caption(bridge_sentence(mb))
     with b:
         if not fm.empty:
             st.altair_chart(

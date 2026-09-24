@@ -39,6 +39,7 @@ Fee leakage across 43 transactions:  ₹399.33
   17 transactions charged more than the contract allows
     CARD_CREDIT          ₹335.78   over 9 transactions
     CARD_DEBIT            ₹60.01   over 5 transactions
+    NETBANKING             ₹3.54   over 3 transactions
 
   worst single transactions:
     STL-HYYZ2XKN  CARD_CREDIT  charged ₹1,169.72, agreed ₹1,114.03, over by ₹55.69
@@ -271,7 +272,7 @@ exceptions). That is the correct cold-start behaviour, not a failure. Without a
 key the pipeline behaves the same way: escalation disables itself once, with a
 message.
 
-`python -m pytest` runs 395 tests and needs no API key; the model is stubbed
+`python -m pytest` runs 409 tests and needs no API key; the model is stubbed
 throughout.
 
 Ask it things:
@@ -289,7 +290,7 @@ the title question ("were you charged what you agreed to?") and six tabs:
 
 | Tab | Shows |
 |---|---|
-| **Summary** | where the money went: total sales, fees, GST, net settled, received in bank, overcharged vs contract; orders reconciled (order-level, stricter than the record-level match rate); a money-flow chart, fees and overcharge by payment method, and a per-method table |
+| **Summary** | where the money went: total sales, fees, GST, net settled, received in bank, overcharged vs contract; orders reconciled (order-level, stricter than the record-level match rate); a money bridge from total sales to net settled (below); fees and overcharge by payment method, and a per-method table |
 | **Contract audit** | contracted vs observed rate per payment method, the worst overcharged transactions, and when leakage started |
 | **How it learned** | exceptions, model calls, match rate, recall and precision across batches |
 | **Rule library** | the rules the model induced and the gate promoted, plus the proposals the gate blocked and why |
@@ -303,6 +304,21 @@ bank deposit bundles every payment method, so "received in bank" cannot be split
 by method, and the contract audit prices a batch per method, not per date. The
 layout works in light and dark mode and on narrow screens, where the cards stack
 and the sidebar starts collapsed.
+
+**The money bridge** (`app/summary.money_bridge`) explains the whole gap
+between what customers paid and what was settled, as a waterfall chart and one
+line of text. Every step is derived from the data, in integer paise:
+
+```
+total sales - never settled (no payout, full refunds, duplicate ledger rows)
+            - charged back - partial refunds - fees - GST - rounding drift
+            + settlements for orders not in the ledger  =  net settled
+```
+
+A final `other` term holds anything the named steps do not explain. It is 0 on
+every committed batch, and a test holds it there. Batch 5 reads: ₹17.28L sold →
+₹2.53L never settled → ₹28.8K charged back → ₹32.4K refunded → ₹10.9K fees and
+GST → +₹8.0K settled for orders not in the ledger → ₹14.11L settled.
 
 ## How it works
 
@@ -403,7 +419,7 @@ src/qa_agent.py         settlement Q&A over SQLite with tool use
 app/dashboard.py        Streamlit
 app/summary.py          totals behind the dashboard's Summary tab
 data/                   the fixed synthetic dataset, with answer keys
-tests/                  395 tests; test_dataset.py checks the data itself
+tests/                  409 tests; test_dataset.py checks the data itself
 ```
 
 ## Changelog
@@ -415,10 +431,20 @@ The latest revision, in brief:
   records. With `provider: anthropic` the Anthropic model name is used, not the
   other provider's.
 - **OpenRouter** is a provider (`provider: openrouter`), and the default.
-- **Dashboard:** a Summary tab with filters, a layout that works on narrow
-  screens and in dark mode, and it opens on the latest real batch.
+- **Dashboard:** a Summary tab with filters and a money bridge that explains
+  every rupee between total sales and net settled, a layout that works on
+  narrow screens and in dark mode, and it opens on the latest real batch.
 - **Contract audit:** reports the gross overcharge and the count of undercharged
   transactions next to the net leakage.
+- **Recorded runs committed:** `db/live_final.db` (the canonical run) and
+  `db/live.db` (the run before the model's verdict became advisory), so every
+  results figure here can be checked from a fresh clone.
+- **Clear input errors:** a Razorpay export with a payment method the contract
+  does not cover (wallet, EMI) is rejected with every such method named,
+  instead of failing on the first one.
+- **`metrics --report`** rounds calls per 100 records once (it printed 34.9
+  for 34.848), and its summary line compares batch 1 with the last real batch
+  rather than the adversarial set.
 - **Q&A prompt:** fee correctness is judged against the contract, not against
   learned rules.
 - **Data:** the synthetic generator is gone; the dataset is fixed and committed,

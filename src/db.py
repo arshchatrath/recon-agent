@@ -85,6 +85,14 @@ def read_razorpay_settlements(path) -> pd.DataFrame:
         raise ValueError(f"{path}: unsupported recon row type(s) {sorted(unknown)}")
 
     rows = rx[rx["type"].isin(["payment", "adjustment"])]
+    unsupported = {f"{m}/{c}" if c else m
+                   for m, c in zip(rows["method"], rows["card_type"])
+                   if (m, c) not in _INSTRUMENT}
+    if unsupported:
+        raise ValueError(
+            f"{path}: unsupported payment method(s) {sorted(unsupported)}. "
+            f"Supporting one needs a contract rate in config.yaml and an entry "
+            f"in db._INSTRUMENT.")
     refunds = rx[rx["type"] == "refund"].groupby("payment_id")["debit"].sum()
     orphaned = set(refunds.index) - set(rows["entity_id"])
     if orphaned:

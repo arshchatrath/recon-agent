@@ -2,6 +2,8 @@ __pycache__/
 *.pyc
 .env
 db/*.db
+!db/live_final.db
+!db/live.db
 db/*.db-journal
 db/*.db-wal
 db/*.db-shm

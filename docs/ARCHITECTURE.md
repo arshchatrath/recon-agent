@@ -36,7 +36,7 @@ The same thing in text, for grepping:
                                   │  only what survives
                                   ▼
                         ┌───────────────────┐
-                        │  llm_reasoner.py  │  Claude + tools:
+                        │  llm_reasoner.py  │  LLM + tools:
                         │                   │   calculate()
                         │  proposes rules   │   check_rule_against_history()
                         │  explains cases   │   get_working_day_lag()
@@ -210,11 +210,14 @@ All four must pass:
 3. **Backtest.** Replay the predicate against every already-resolved record.
    `correct` = it agrees with a recorded match; `wrong` = it contradicts one;
    `INAPPLICABLE` costs nothing. Requires support ≥ 3, precision ≥ 0.98, and
-   **zero** contradicted records involving money.
+   no contradiction larger than the rounding noise band (`noise_band_paise`,
+   5 paise): a correct rule missed by drift is kept, a wrong rate is not.
 4. **Conflict.** No cycle in the precedence DAG, no fully-overlapping tolerance
    interval with an active rule of the same type and scope.
 
-Failing only gates 1 or 2 leaves the proposal *pending* for a later batch, insufficient evidence is a different thing from proven wrong, and the audit log
+Failing only gates 1 or 2, or gate 3 only for lack of support (fewer than 3
+records to test against), leaves the proposal *pending* for a later batch.
+Insufficient evidence is a different thing from proven wrong, and the audit log
 records the difference.
 
 ### Where the backtest gets its evidence
@@ -240,14 +243,19 @@ was never asked. That status column is ledger data, not ground truth.
 ## What is verified, and what is not
 
 The deterministic layers, the gate, the metrics and the storage are exercised
-by 395 tests and by full runs over five batches, with the proposal step driven
+by 409 tests and by full runs over five batches, with the proposal step driven
 by a test double.
 
-The proposal step has separately been run live (Gemini 3.1 Flash Lite, batch 1,
-57 escalations). It induced the fee formulas correctly and unaided, and two of
-them. CARD_DEBIT at 0.9% and CARD_CREDIT at 2%, both plus 18% GST on the fee, were promoted by the gate at backtest precision 1.000 with zero contradicted
-records. The full loop is therefore verified end to end with a live model:
-induction, backtest, promotion. The README carries the audit entries.
+The proposal step has also been run live, twice, over all six batches with
+Gemini 3.1 Flash Lite, and both runs are committed. `db/live.db` is the run
+before the model's match verdict was made advisory; `db/live_final.db` is the
+run after it, and the source of the README's canonical results table. In both,
+the model induced all four fee formulas unaided and the gate promoted them in
+batch 1 (0.9% and 2% for debit and credit cards, a flat 1200 paise for
+netbanking, zero for UPI, each plus 18% GST on the fee); the first run also
+promoted a refund pattern in batch 4. The full loop is therefore verified end
+to end with a live model: induction, backtest, promotion. Every promotion and
+rejection, with its backtest report, is in each database's `rule_audit` table.
 
 Live running exposed two things the test suite could not, because the test
 double proposed one fixed sensible tolerance and never refined it:
@@ -256,8 +264,9 @@ double proposed one fixed sensible tolerance and never refined it:
 present as a contradicted record. At `tolerance_paise: 0` a correct fee formula
 is contradicted by the ~5% of rows carrying a paise or two of rounding drift,
 and dies at 0.889 precision. The magnitudes differ enormously, 1 counterexample
-in 9 versus 83 in 83 for a deliberately wrong rate, and a future version should
-use that rather than treating any contradiction involving money as fatal.
+in 9 versus 83 in 83 for a deliberately wrong rate. The gate now uses that: the
+backtest records how far each contradiction misses (`max_deviation_paise`), and
+a miss within the 5-paise noise band is drift, not a wrong rule.
 
 **A hypothesis is the claim, not the noise allowance.** Fingerprinting on the
 whole predicate meant a model refining its tolerance (0 → 1 → 2 → 3) filed four
@@ -302,6 +311,17 @@ Without gate 3 this rule goes live and silently mis-explains every UPI
 settlement from that batch onward, each one a confident wrong answer in a
 ledger. That is the failure mode the entire architecture exists to prevent.
 
+## Where the money went: the Summary tab's bridge
+
+The dashboard's Summary tab closes the gap between gross sales and net settled
+with a bridge, `money_bridge()` in `app/summary.py`. It starts from the order
+ledger's gross and subtracts, in paise: ledger orders no settlement claims,
+chargeback reversals, partial refunds taken from payouts, fees and GST, and
+rounding drift; it adds back settlements claiming orders the ledger does not
+have. The identity has an explicit `other` term for anything left over. It is
+0 on every committed batch and under every filter the tab offers, and a test
+keeps it there, so a gap on screen is always either named or flagged.
+
 ## Cost model
 
 `cost_weighted_error = 50 × false_positives + 1 × open_exceptions`
@@ -321,10 +341,12 @@ measured constant, and it is a `config.yaml` knob. What matters is that it is
   invariant with a comment and a test);
 - subset-sum reporting ambiguity rather than tiebreaking a truncated sample;
 - the zero-tolerance backtest gate;
-- the confidence floor that discards the model's own `match` verdict;
+- the model's own `match` verdict being advisory: it never writes a match,
+  whatever its confidence;
 - `insufficient_information` prompted for as a valued answer.
 
-Each of those trades recall for precision. The measured result is 88.9% recall
-at 100% precision with zero false positives across five runs, including the
-adversarial set. We would rather hand a controller 24 open questions than one
-silent error.
+Each of those trades recall for precision. In the canonical live run
+(`db/live_final.db`) precision is 100% with zero false positives on every
+batch, including the adversarial set, while recall ranges from 50.4% (batch 1,
+nothing learned yet) to 93.2% (batch 4). We would rather hand a controller an
+open question than one silent error.

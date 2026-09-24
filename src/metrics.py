@@ -119,8 +119,10 @@ def score_batch(conn, batch_id: str) -> dict:
         "cost_weighted_error": cost_weighted,
         "llm_calls": run["llm_calls"] if run else 0,
         "llm_calls_avoided": run["llm_calls_avoided"] if run else 0,
-        "llm_calls_per_100_records": round(
-            (run["llm_calls"] / total * 100), 2) if run and total else 0.0,
+        # unrounded: rounding here and again for display turned 34.848 into
+        # 34.85 and then 34.9, where the true one-decimal figure is 34.8
+        "llm_calls_per_100_records": (run["llm_calls"] / total * 100)
+        if run and total else 0.0,
         "llm_tokens_in": run["llm_tokens_in"] if run else 0,
         "llm_tokens_out": run["llm_tokens_out"] if run else 0,
         "active_rules": run["active_rules_count"] if run else 0,
@@ -193,7 +195,9 @@ def learning_curve(conn, batches=None) -> list[dict]:
 # ------------------------------------------------------------------ report
 def report(conn, batches=None) -> str:
     lines = []
-    curve = learning_curve(conn, batches)
+    # the adversarial set is a trap set, not a step on the learning curve
+    curve = learning_curve(conn, batches and [b for b in batches
+                                              if b != "adversarial"])
     if curve:
         lines += ["LEARNING CURVE", "=" * 78,
                   f"{'batch':>6} {'excep':>6} {'llm':>5} {'/100rec':>8} "

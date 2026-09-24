@@ -151,3 +151,24 @@ def test_a_refund_without_its_payment_fails_loudly(tmp_path):
                              "SB-1,,default,,,pay_MISSING,UTR1,,,upi,,,,")
     with pytest.raises(ValueError, match="pay_MISSING"):
         read_razorpay_settlements(f)
+
+
+def test_an_unsupported_payment_method_names_every_one_up_front(tmp_path):
+    """Razorpay also exports wallet and EMI payments. Every unsupported method
+    in the file is reported at once, with what supporting it takes, instead of
+    a bare KeyError on the first one."""
+    from src.db import read_razorpay_settlements
+    f = recon_file(
+        tmp_path,
+        "pay_W,payment,0,9764,10000,INR,236,36,False,True,1,1,SB-1,,default,,,,"
+        "UTR1,order_W,ORD-W,wallet,,,,",
+        "pay_E,payment,0,9764,10000,INR,236,36,False,True,1,1,SB-1,,default,,,,"
+        "UTR1,order_E,ORD-E,emi,,,,",
+        "pay_U,payment,0,10000,10000,INR,0,0,False,True,1,1,SB-1,,default,,,,"
+        "UTR1,order_U,ORD-U,upi,,,,")
+    with pytest.raises(ValueError) as e:
+        read_razorpay_settlements(f)
+    msg = str(e.value)
+    assert "settlements.csv" in msg and "'emi'" in msg and "'wallet'" in msg
+    assert "config.yaml" in msg and "_INSTRUMENT" in msg
+    assert "upi" not in msg.split("method(s)")[1].split(".")[0]

@@ -191,3 +191,18 @@ def test_report_renders_without_blowing_up(scored):
     assert "FALSE POSITIVES" in text
     assert "RULE LIBRARY" in text
     assert "₹" in text          # money formatted, not raw paise
+
+
+def test_calls_per_100_records_is_rounded_once(tmp_path):
+    """46 calls over 132 records is 34.848...; rounding it to 34.85 first and
+    then to one decimal printed 34.9. The report must print 34.8."""
+    from src.db import reset_db
+    from src.metrics import report
+    conn = reset_db(tmp_path / "r.db")
+    conn.execute("INSERT INTO run_metrics (batch_id, total_records, llm_calls,"
+                 " llm_calls_avoided, match_rate, active_rules_count,"
+                 " wall_clock_seconds, component_sizes_json)"
+                 " VALUES ('4', 132, 46, 0, 0.5, 1, 1.0, '{}')")
+    assert score_batch(conn, "4")["llm_calls_per_100_records"] == pytest.approx(
+        46 / 132 * 100)
+    assert "    34.8 " in report(conn, ["4"])
