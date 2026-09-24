@@ -355,8 +355,6 @@ def plain_english(predicate: dict) -> str:
         return f"{who}: settles {when} after the order"
     if t == "refund_pattern":
         return f"{who}: a net below the fee-implied net indicates a partial refund"
-    if t == "narration_pattern":
-        return f"bank narrations matching {predicate['regex']} carry the batch id"
     if t == "exact_id":
         return "a settlement claiming an order id matches that order"
     return json.dumps(predicate)

@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from datetime import date
 
 from src.calendar_utils import working_days_between
@@ -22,8 +21,7 @@ log = logging.getLogger(__name__)
 
 INAPPLICABLE = "INAPPLICABLE"          # third verdict: this rule has no opinion
 ALL = "ALL"
-RULE_TYPES = {"exact_id", "fee_formula", "timing_window",
-              "refund_pattern", "narration_pattern"}
+RULE_TYPES = {"exact_id", "fee_formula", "timing_window", "refund_pattern"}
 
 
 class PredicateError(ValueError):
@@ -105,14 +103,6 @@ def validate_predicate(pred) -> dict:
     elif t == "refund_pattern":
         if pred.get("condition") != "net < expected_net":
             raise PredicateError("unsupported refund_pattern condition")
-
-    elif t == "narration_pattern":
-        try:
-            re.compile(pred["regex"])
-        except (KeyError, re.error) as e:
-            raise PredicateError(f"bad narration regex: {e}") from e
-        if pred.get("maps_to") != "settlement_batch_id":
-            raise PredicateError("narration_pattern must map to settlement_batch_id")
 
     return pred
 
@@ -218,14 +208,6 @@ def evaluate(pred: dict, left, right, rules: "RuleSet | None" = None):
             return INAPPLICABLE
         return net < expected - tol
 
-    if t == "narration_pattern":
-        narration = _d(left, "narration")
-        sbid = _d(right, "settlement_batch_id")
-        if narration is None or sbid is None:
-            return INAPPLICABLE
-        m = re.search(pred["regex"], str(narration))
-        return bool(m) and m.group(1) == sbid
-
     return INAPPLICABLE
 
 
@@ -272,13 +254,6 @@ class RuleSet:
     def of_type(self, rule_type, instrument=None):
         return [r for r in self.rules if r.rule_type == rule_type
                 and (instrument is None or r.scope in (ALL, instrument))]
-
-    def first_match(self, left, right):
-        """First rule in precedence order that returns True. -> (Rule, verdict)."""
-        for r in self.rules:
-            if evaluate(r.predicate, left, right, self) is True:
-                return r
-        return None
 
     def expected_net(self, gross: int, instrument: str) -> int | None:
         """What an active fee rule says this gross should settle at, or None if

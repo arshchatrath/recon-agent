@@ -6,11 +6,11 @@ import pytest
 
 from src.db import ingest_batch, reset_db
 from src.deterministic import ALL, RuleSet, backtest
-from src.generate_data import DEFAULT_LAG, GST_RATE, LAG_WORKING_DAYS, MDR
 from src.llm_reasoner import LLMVerdict
 from src.pipeline import BatchRun
 from src.rule_engine import (check_gate, intake, plain_english, process_proposals,
                              retire_stale_rules, review_pending)
+from tests.test_dataset import DEFAULT_LAG, GST_RATE, LAG_WORKING_DAYS, MDR
 
 
 @pytest.fixture
@@ -31,7 +31,7 @@ def timing(instrument="UPI", lo=1, hi=1):
 
 
 def true_fee(instrument):
-    """The rule the system is meant to induce, built from the generator's own
+    """The rule the system is meant to induce, built from the dataset's own
     constants so the test cannot drift from the data."""
     kind, v = MDR[instrument]
     params = {"flat_paise": int(v)} if kind == "flat" else {"rate": v}

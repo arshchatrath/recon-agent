@@ -10,6 +10,7 @@ that does not carry information.
 """
 from __future__ import annotations
 
+import html
 import json
 import sys
 from pathlib import Path
@@ -21,6 +22,8 @@ import streamlit as st
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import src.db as db                                       # noqa: E402
+from app.summary import (EXCEPTION, MATCHED, batch_instruments,  # noqa: E402
+                         order_date_range, summary_totals)
 from src.contract import compare_to_contract, leakage_report  # noqa: E402
 from src.db import get_conn                               # noqa: E402
 from src.metrics import learning_curve, rule_activity, score_batch  # noqa: E402
@@ -28,7 +31,7 @@ from src.money import format_paise                        # noqa: E402
 from src.rule_engine import plain_english                 # noqa: E402
 
 st.set_page_config(page_title="Reconciliation Agent", layout="wide",
-                   initial_sidebar_state="expanded")
+                   initial_sidebar_state="auto")
 
 DANGER, WARN, OK, COOL, MUTED = "#c0392b", "#c77700", "#1a7f5a", "#2563eb", "#6b7280"
 
@@ -50,10 +53,18 @@ st.markdown(f"""
   .bad  {{background: #fdf0ee; border-color: {DANGER}; color: #7d2018;}}
   .good {{background: #eefaf4; border-color: {OK};     color: #10563a;}}
   .card {{background: #fbfbfc; border: 1px solid #e6e8eb; border-radius: 10px;
-       padding: 1rem 1.15rem; height: 100%;}}
+       padding: 1rem 1.15rem; height: 100%; color: #1f2328;
+       margin-bottom: .8rem;}}
   .card .k {{color: {MUTED}; font-size: .74rem; text-transform: uppercase;
        letter-spacing: .06em;}}
-  .card .v {{font-size: 1.55rem; font-weight: 650; line-height: 1.35;}}
+  .card .v {{font-size: clamp(1.15rem, 1rem + .6vw, 1.55rem); font-weight: 650;
+       line-height: 1.35; white-space: nowrap;}}
+  @media (max-width: 640px) {{
+    .block-container {{padding: 1.2rem .8rem 2rem;}}
+    h1 {{font-size: 1.5rem !important;}}
+    .banner {{font-size: 1rem; padding: .9rem 1rem;}}
+    .banner b {{font-size: 1.1rem;}}
+  }}
   .foot {{color: {MUTED}; font-size: .85rem;}}
 </style>
 """, unsafe_allow_html=True)
@@ -74,9 +85,10 @@ def batches(c):
         "SELECT DISTINCT batch_id FROM run_metrics ORDER BY batch_id")]
 
 
-def card(col, label, value, colour=None):
+def card(col, label, value, colour=None, tip=None):
+    title = f' title="{html.escape(tip)}"' if tip else ""
     col.markdown(
-        f'<div class="card"><div class="k">{label}</div>'
+        f'<div class="card"{title}><div class="k">{label}</div>'
         f'<div class="v" style="color:{colour or "inherit"}">{value}</div></div>',
         unsafe_allow_html=True)
 
@@ -112,12 +124,35 @@ if not all_batches:
     st.error("No batches have been run yet. Run:  `python -m src.pipeline --batch 1`")
     st.stop()
 
+numbered = [b for b in all_batches if b.isdigit()]
+
 # ------------------------------------------------------------------- sidebar
 with st.sidebar:
     st.markdown("### Reconciliation Agent")
     st.caption("Three sources, one truth, and proof you were charged what you "
                "agreed to.")
-    batch = st.selectbox("Batch", all_batches, index=len(all_batches) - 1)
+    batch = st.selectbox("Batch", all_batches, index=all_batches.index(
+        numbered[-1]) if numbered else len(all_batches) - 1)
+
+    # Summary-tab filters. None means "not filtered", so an untouched control
+    # never narrows anything, and the bank total stays available.
+    methods_all = batch_instruments(c, batch)
+    f_methods = st.multiselect("Payment method", methods_all, default=methods_all)
+    f_instruments = None if set(f_methods) == set(methods_all) else f_methods
+    f_from = f_to = None
+    d_lo, d_hi = order_date_range(c, batch)
+    if d_lo is not None:
+        picked = st.date_input("Order date", (d_lo, d_hi),
+                               min_value=d_lo, max_value=d_hi)
+        picked = picked if isinstance(picked, (tuple, list)) else (picked,)
+        if picked and picked[0] > d_lo:
+            f_from = picked[0]
+        if len(picked) == 2 and picked[1] < d_hi:
+            f_to = picked[1]
+    f_status = st.multiselect("Status", [MATCHED, EXCEPTION],
+                              default=[MATCHED, EXCEPTION])
+    f_statuses = None if len(f_status) == 2 else f_status
+    st.caption("These filters apply to the Summary tab only.")
     st.divider()
 
     s = score_batch(c, batch)
@@ -133,7 +168,6 @@ with st.sidebar:
                f"rules · {s['wall_clock_seconds']:.1f}s")
     st.caption("Every tab works without an API key, except **Ask**.")
 
-numbered = [b for b in all_batches if b.isdigit()]
 curve = pd.DataFrame(learning_curve(c, numbered)) if numbered else pd.DataFrame()
 
 # ---------------------------------------------------------------- the answer
@@ -169,8 +203,93 @@ card(k[3], "False positives", s["false_positive_count"],
      OK if not s["false_positive_count"] else DANGER)
 
 st.write("")
-tab_audit, tab_learn, tab_rules, tab_exc, tab_ask = st.tabs(
-    ["Contract audit", "How it learned", "Rule library", "Exceptions", "Ask"])
+tab_sum, tab_audit, tab_learn, tab_rules, tab_exc, tab_ask = st.tabs(
+    ["Summary", "Contract audit", "How it learned", "Rule library",
+     "Exceptions", "Ask"])
+
+# ------------------------------------------------------------------- summary
+with tab_sum:
+    t = summary_totals(c, batch, f_instruments, f_from, f_to, f_statuses)
+    st.markdown("### Where the money went")
+    k = st.columns(3) + st.columns(3)
+    card(k[0], "Total sales (gross)", format_paise(t["gross_sales_paise"]))
+    card(k[1], "Fees paid", format_paise(t["fees_paise"]))
+    card(k[2], "GST on fees", format_paise(t["gst_paise"]))
+    card(k[3], "Net settled", format_paise(t["net_settled_paise"]), COOL)
+    bank = t["bank_received_paise"]
+    card(k[4], "Received in bank",
+         format_paise(bank) if bank is not None
+         else "n/a for method filter" if f_instruments is not None
+         else "n/a for this filter",
+         None if bank is not None else MUTED, tip=t["bank_note"])
+    over = t["overcharge_paise"]
+    card(k[5], "Overcharged vs contract",
+         format_paise(over) if over is not None else "n/a for this filter",
+         MUTED if over is None else DANGER if over > 0 else OK,
+         tip=t["overcharge_note"] or (
+             f"Gross overcharge {format_paise(t['gross_overcharge_paise'])}: "
+             f"every transaction charged above contract, added up. The card "
+             f"shows the net figure, after undercharges are subtracted."))
+    st.markdown(f"Orders reconciled: **{t['orders_reconciled']} of "
+                f"{t['orders_total']}**")
+    st.caption("Counted per order: an order is reconciled only when it is bound "
+               "to its settlement. The match rate above counts records, "
+               "including settlements the bank confirmed, so the two differ.")
+
+    flow = pd.DataFrame([
+        {"step": s, "rupees": v / 100} for s, v in (
+            ("Gross sales", t["gross_sales_paise"]), ("Fees", t["fees_paise"]),
+            ("GST", t["gst_paise"]), ("Net settled", t["net_settled_paise"]),
+            ("Received in bank", bank)) if v is not None])
+    fm = pd.DataFrame(
+        [{"method": r["instrument"], "measure": "Fees",
+          "rupees": r["fees_paise"] / 100} for r in t["by_method"]]
+        + [{"method": r["instrument"], "measure": "Overcharge",
+            "rupees": r["overcharge_paise"] / 100} for r in t["by_method"]
+           if r["overcharge_paise"] is not None])
+
+    a, b = st.columns(2)
+    with a:
+        st.altair_chart(
+            alt.Chart(flow, title="Money flow").mark_bar(
+                size=46, cornerRadiusEnd=4).encode(
+                x=alt.X("step:N", sort=None, title=None,
+                        axis=alt.Axis(labelAngle=0)),
+                y=alt.Y("rupees:Q", title="rupees"),
+                color=alt.value(COOL),
+                tooltip=["step", alt.Tooltip("rupees:Q", format=",.2f")])
+            .properties(height=270).configure_view(strokeWidth=0),
+            width='stretch')
+    with b:
+        if not fm.empty:
+            st.altair_chart(
+                alt.Chart(fm, title="Fees and overcharge by payment method")
+                .mark_bar(cornerRadiusEnd=4).encode(
+                    x=alt.X("method:N", title=None,
+                            axis=alt.Axis(labelAngle=0)),
+                    xOffset="measure:N",
+                    y=alt.Y("rupees:Q", title="rupees"),
+                    color=alt.Color("measure:N", title=None,
+                                    scale=alt.Scale(domain=["Fees", "Overcharge"],
+                                                    range=[MUTED, DANGER]),
+                                    legend=alt.Legend(orient="top")),
+                    tooltip=["method", "measure",
+                             alt.Tooltip("rupees:Q", format=",.2f")])
+                .properties(height=270).configure_view(strokeWidth=0),
+                width='stretch')
+
+    if t["by_method"]:
+        st.dataframe(pd.DataFrame([{
+            "payment method": r["instrument"], "transactions": r["transactions"],
+            "gross": format_paise(r["gross_paise"]),
+            "fees": format_paise(r["fees_paise"]),
+            "GST": format_paise(r["gst_paise"]),
+            "net": format_paise(r["net_paise"]),
+            "overcharge": format_paise(r["overcharge_paise"])
+            if r["overcharge_paise"] is not None else "n/a"}
+            for r in t["by_method"]]), width='stretch', hide_index=True)
+    else:
+        st.info("No records match these filters.")
 
 # ------------------------------------------------------------ contract audit
 with tab_audit:

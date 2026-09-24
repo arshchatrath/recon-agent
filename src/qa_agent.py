@@ -40,10 +40,12 @@ Absolute rules:
    caveat, a caveated wrong number is still a wrong number.
 4. Amounts come back as integer paise plus a formatted rupee string. Quote the \
    formatted string. Never convert paise to rupees yourself.
-5. This system learned the merchant's fee and timing structure from the data \
-   rather than being told it. When asked what you know about the merchant, \
-   call list_learned_rules and report what was actually induced, including how \
-   many records back each rule and when it was promoted.
+5. The matching rules were induced from the data and promoted only after \
+   passing the gate, but whether a fee is correct is always judged against \
+   the contracted rates in config.yaml, never against what was learned. When \
+   asked what you know about the merchant, call list_learned_rules and report \
+   what was actually induced, including how many records back each rule and \
+   when it was promoted.
 
 Be brief and concrete. A controller is reading this between other tasks.
 """
@@ -114,7 +116,9 @@ class SettlementQA:
         self.conn = conn or get_conn()
         self._client = client
         self.cfg = load()["llm"]
-        self.model = model or self.cfg["model"]
+        self.model = model or (self.cfg["anthropic_model"]
+                               if self.cfg.get("provider") == "anthropic"
+                               else self.cfg["model"])
         self.calls = self.tokens_in = self.tokens_out = 0
 
     @property
@@ -342,7 +346,8 @@ class SettlementQA:
                 unauthenticated = "authentication" in str(e).lower() or \
                     type(e).__name__ in ("AuthenticationError",
                                          "PermissionDeniedError")
-                note = ("Set ANTHROPIC_API_KEY to enable chat. The reconciled "
+                note = ("Set the API key for llm.provider in .env (see "
+                        ".env.example) to enable chat. The reconciled "
                         "data itself is available without it, try "
                         "`python -m src.metrics --report`."
                         if unauthenticated else

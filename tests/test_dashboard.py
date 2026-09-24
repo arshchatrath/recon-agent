@@ -49,8 +49,8 @@ def test_every_section_is_reachable(real_db):
     require the presenter to hunt."""
     at = run_app()
     labels = [t.label for t in at.tabs]
-    assert labels == ["Contract audit", "How it learned", "Rule library",
-                      "Exceptions", "Ask"], labels
+    assert labels == ["Summary", "Contract audit", "How it learned",
+                      "Rule library", "Exceptions", "Ask"], labels
 
 
 def test_the_page_answers_its_own_title_before_anything_else(real_db):
@@ -124,3 +124,68 @@ def test_it_fails_gracefully_when_there_is_no_database(tmp_path, monkeypatch):
     at.run()
     assert not at.exception
     assert any("python -m src.pipeline" in e.value for e in at.error)
+
+
+# ------------------------------------------------------------- summary tab
+@pytest.fixture(scope="module")
+def batch1_no_llm(tmp_path_factory):
+    """Batch 1 exactly as `python -m src.pipeline --batch 1 --no-llm` leaves it."""
+    from src.pipeline import run_batch
+    conn = reset_db(tmp_path_factory.mktemp("sum") / "s.db")
+    run_batch(conn, "1", use_llm=False)
+    yield conn
+    conn.close()
+
+
+def test_summary_unfiltered_totals_are_the_source_file_sums(batch1_no_llm):
+    import pandas as pd
+    from app.summary import summary_totals
+    from src.db import read_razorpay_settlements
+    d = Path(__file__).resolve().parent.parent / "data" / "batch_1"
+    orders = pd.read_csv(d / "orders.csv")
+    stl = read_razorpay_settlements(d / "settlements.csv")
+    bank = pd.read_csv(d / "bank_statement.csv")
+
+    t = summary_totals(batch1_no_llm, "1")
+    assert t["gross_sales_paise"] == int(orders.gross_amount_paise.sum())
+    assert t["fees_paise"] == int(stl.mdr_paise.sum())
+    assert t["gst_paise"] == int(stl.gst_on_mdr_paise.sum())
+    assert t["net_settled_paise"] == int(stl.net_amount_paise.sum())
+    assert t["bank_received_paise"] == int(bank.credit_amount_paise.sum())
+    assert t["orders_total"] == len(orders)
+    # the per-method table adds up to the strip
+    for col, key in (("gross_paise", "gross_sales_paise"),
+                     ("fees_paise", "fees_paise"), ("net_paise", "net_settled_paise")):
+        assert sum(r[col] for r in t["by_method"]) == t[key]
+
+
+def test_summary_instrument_filter_narrows_the_totals(batch1_no_llm):
+    from app.summary import summary_totals
+    everything = summary_totals(batch1_no_llm, "1")
+    upi = summary_totals(batch1_no_llm, "1", instruments=["UPI"])
+    assert 0 < upi["gross_sales_paise"] < everything["gross_sales_paise"]
+    assert upi["orders_total"] < everything["orders_total"]
+    assert [r["instrument"] for r in upi["by_method"]] == ["UPI"]
+
+
+def test_summary_bank_received_is_unknown_under_a_method_filter(batch1_no_llm):
+    from app.summary import summary_totals
+    t = summary_totals(batch1_no_llm, "1", instruments=["CARD_CREDIT"])
+    assert t["bank_received_paise"] is None
+    assert "payment method" in t["bank_note"]
+
+
+def test_summary_batch_one_without_the_model_reconciles_no_orders(batch1_no_llm):
+    """Every record-level match in this state is a bank match; no order has
+    been bound to its settlement, and the summary must say so."""
+    from app.summary import summary_totals
+    t = summary_totals(batch1_no_llm, "1")
+    assert t["orders_reconciled"] == 0 and t["orders_total"] > 0
+
+
+def test_summary_tab_renders_with_a_method_filter(real_db):
+    at = run_app()
+    at.sidebar.multiselect[0].set_value(["UPI"]).run()
+    assert not at.exception, [str(e) for e in at.exception]
+    shown = " ".join(m.value for m in at.markdown)
+    assert "n/a for method filter" in shown

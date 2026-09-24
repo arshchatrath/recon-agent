@@ -6,6 +6,7 @@ path here passes Python ints straight through, nothing converts via float.
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -54,8 +55,56 @@ def reset_db(path: Path | str | None = None) -> sqlite3.Connection:
     return init_db(get_conn(p))
 
 
-def query(conn, sql: str, params=()) -> list[sqlite3.Row]:
-    return conn.execute(sql, params).fetchall()
+# ------------------------------------------------ Razorpay settlement export
+IST = timezone(timedelta(hours=5, minutes=30))
+_INSTRUMENT = {("upi", ""): "UPI", ("netbanking", ""): "NETBANKING",
+               ("card", "credit"): "CARD_CREDIT", ("card", "debit"): "CARD_DEBIT"}
+
+
+def read_razorpay_settlements(path) -> pd.DataFrame:
+    """Razorpay's combined settlement recon export -> one internal row per
+    payment or adjustment.
+
+    The export (GET /v1/settlements/recon/combined) differs from the internal
+    table in four ways, each translated here:
+      - `fee` INCLUDES GST and `tax` is the GST part of it, so the MDR is
+        fee - tax;
+      - a refund is its own `refund` row pointing at its payment through
+        `payment_id`; it is folded into that payment's net;
+      - a chargeback is an `adjustment` row debiting the merchant, so it becomes
+        a negative row, as a reversal is internally;
+      - timestamps are unix seconds; they become IST ISO strings.
+    `settlement_utr` is deliberately not read: it is the aggregator's own claim
+    about which bank credit each payment landed in, and the bank leg proves
+    that grouping independently, from the bank statement.
+    """
+    rx = pd.read_csv(path, keep_default_na=False, dtype={
+        "payment_id": str, "card_type": str, "order_receipt": str})
+    unknown = set(rx["type"]) - {"payment", "refund", "adjustment"}
+    if unknown:
+        raise ValueError(f"{path}: unsupported recon row type(s) {sorted(unknown)}")
+
+    rows = rx[rx["type"].isin(["payment", "adjustment"])]
+    refunds = rx[rx["type"] == "refund"].groupby("payment_id")["debit"].sum()
+    orphaned = set(refunds.index) - set(rows["entity_id"])
+    if orphaned:
+        raise ValueError(f"{path}: refunds for payments not in the file {sorted(orphaned)}")
+
+    sign = rows["type"].map({"payment": 1, "adjustment": -1})
+    return pd.DataFrame({
+        "settlement_txn_id": rows["entity_id"],
+        "order_id": rows["order_receipt"],
+        "settled_datetime": rows["settled_at"].map(
+            lambda ts: datetime.fromtimestamp(int(ts), IST).strftime("%Y-%m-%dT%H:%M:%S")),
+        "gross_amount_paise": sign * rows["amount"],
+        "mdr_paise": sign * (rows["fee"] - rows["tax"]),
+        "gst_on_mdr_paise": sign * rows["tax"],
+        "net_amount_paise": (rows["credit"] - rows["debit"]
+                             - rows["entity_id"].map(refunds).fillna(0).astype(int)),
+        "settlement_batch_id": rows["settlement_id"],
+        "instrument": [_INSTRUMENT[m, c] for m, c in
+                       zip(rows["method"], rows["card_type"])],
+    }).reset_index(drop=True)
 
 
 # ---------------------------------------------------------------- ingestion
@@ -82,7 +131,9 @@ def ingest_batch(conn: sqlite3.Connection, batch_id: str,
         DATA_DIR / ("adversarial" if batch_id == "adversarial" else f"batch_{batch_id}"))
     counts = {}
     for table, (csv_name, cols, rename) in _INGEST.items():
-        df = pd.read_csv(d / f"{csv_name}.csv")[cols]
+        path = d / f"{csv_name}.csv"
+        df = (read_razorpay_settlements(path) if table == "settlements"
+              else pd.read_csv(path))[cols]
         if rename:
             df = df.rename(columns=rename)
             cols = list(df.columns)
@@ -98,16 +149,3 @@ def ingest_batch(conn: sqlite3.Connection, batch_id: str,
         counts[table] = len(df)
     conn.commit()
     return counts
-
-
-if __name__ == "__main__":
-    import argparse
-
-    p = argparse.ArgumentParser()
-    p.add_argument("--reset", action="store_true")
-    p.add_argument("--ingest", help="batch id, e.g. 1 or adversarial")
-    a = p.parse_args()
-    conn = reset_db() if a.reset else init_db()
-    print(f"db ready at {DB_PATH}")
-    if a.ingest:
-        print(ingest_batch(conn, a.ingest))

@@ -1,5 +1,4 @@
 pandas>=2.0
-Faker>=25.0
 holidays>=0.60          # workalendar 17 has no India calendar
 scipy>=1.11
 networkx>=3.0
@@ -7,5 +6,4 @@ PyYAML>=6.0
 anthropic>=0.40
 streamlit>=1.35
 pytest>=8.0
-matplotlib>=3.7
 google-genai>=1.0        # only needed when llm.provider is "gemini"

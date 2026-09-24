@@ -47,6 +47,11 @@ Fee leakage across 43 transactions:  ₹399.33
 Nobody told it the rates had changed. It read what was actually deducted and
 held it against the contract.
 
+The audit reports two totals: the **net** leakage (overcharges minus any
+undercharges) and the **gross** overcharge (only the transactions charged above
+contract, added up), so an undercharge on one row can never hide an overcharge
+on another.
+
 ### Why this direction, and not the other one
 
 An earlier version of this project did the opposite: it *induced* the fee
@@ -78,18 +83,21 @@ has in a contract.**
 
 ### What a full live run found
 
+*Run 1, before the change below. Stored in `db/live.db`.*
+
 The whole sequence was run against a live model (Gemini 3.1 Flash Lite), six
 batches, 41 minutes. It promoted five rules unaided, all four fee formulas in
 **batch 1 alone**, and the refund pattern by batch 4, and escalations fell from
 57 in batch 1 to 8 by batch 4.
 
-It also produced **53 false positives, and every single one came from the same
-place**: the path where the model's own `match` verdict was allowed to write a
-match. Not one came from any deterministic path.
+It also produced **53 false positives across the full run, 39 of them in batch
+1 alone, and every single one came from the same place**: the path where the
+model's own `match` verdict was allowed to write a match. Not one came from any
+deterministic path.
 
 ```
 resolver        false positives
-llm                          53
+llm                          53     (per batch: 39, 1, 3, 4, 6, adversarial 0)
 deterministic                 0
 subset_sum                    0
 hungarian / mincostflow       0
@@ -110,7 +118,12 @@ hesitantly wrong.
 
 **So the model's verdict is now advisory: it is recorded on the exception for
 the human and never applied.** The whole sequence was then re-run live with that
-change, and these numbers are measured, not derived:
+change, and these numbers are measured, not derived.
+
+*Run 2, after the change. Stored in `db/live_final.db`. **This is the canonical
+results table**; every other results figure in this README refers to it unless
+it says otherwise. `llm` counts API calls, including each tool-use turn, so it
+can exceed the number of records.*
 
 ```
  batch  excep   llm   match     prec  recall   FP  rules  promoted   leakage
@@ -123,8 +136,7 @@ change, and these numbers are measured, not derived:
 ```
 
 **Precision 100% on every batch, zero false positives, zero model-written
-matches**, against 53 false positives from that path in the run before the
-change. Recall is unaffected, which means all 53 had been wrong: the model's
+matches**, against 53 false positives from that path in Run 1. Recall is unaffected, which means all 53 had been wrong: the model's
 match verdicts scored **0/53**. Declining them costs nothing.
 
 The model still promoted all four fee formulas in batch 1 alone, unaided:
@@ -164,26 +176,17 @@ a demonstration vehicle for it, not the product.
 
 The reconciliation engine itself is what does the work, and it gets cheaper as
 it learns. Four honest batches, then batch 5, the month the aggregator quietly
-raised its rates.
+raised its rates. The figures are the canonical Run 2 table above
+(`db/live_final.db`).
 
-```
- batch  excep   llm  /100rec  match    prec  recall   FP  rules
-     1     68    58     44.3  44.3%  100.0%   50.4%    0      1
-     2     19    20     15.3  80.2%  100.0%   92.3%    0      5
-     3     14     5      3.9  84.4%  100.0%   98.2%    0      8
-     4     12     1      0.8  85.6%  100.0%   99.2%    0      9
-     5     33    24     17.9  73.1%  100.0%   80.8%    0      9   <- rates changed
-   adv      5     5     10.0  76.0%  100.0%   79.5%    0      9
-```
+Two things to read there.
 
-Two things to read here.
+**Batches 1-4:** exceptions fall 68 → 19 and model calls fall 225 → 46 (171.8
+→ 34.8 per 100 records), while precision holds at 100% and false positives stay
+at zero, including on an adversarial set built specifically to induce them.
 
-**Batches 1-4:** exceptions fall 68 → 12 and model calls fall from 44 per 100
-records to under one, while precision holds at 100% and false positives stay at
-zero, including on an adversarial set built specifically to induce them.
-
-**Batch 5 is the interesting row.** Exceptions jump back to 33 and model calls
-to 24, because the learned rules stop explaining the data. The system does not
+**Batch 5 is the interesting row.** Exceptions jump back to 39 and model calls
+to 122, because the learned rules stop explaining the data. The system does not
 quietly adapt to the new rates; it **notices, refuses, and escalates.** The
 contract audit then prices exactly what changed. A system that had learned its
 rules from the aggregator would have absorbed the increase without a sound.
@@ -191,6 +194,8 @@ rules from the aggregator would have absorbed the increase without a sound.
 ## Setup
 
 ```bash
+python -m venv .venv
+.venv\Scripts\Activate.ps1   # Windows PowerShell; on macOS/Linux: source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env          # then set the key for your provider
 ```
@@ -201,15 +206,16 @@ cp .env.example .env          # then set the key for your provider
 
 ```yaml
 llm:
-  provider: "gemini"              # or "anthropic"
-  model: "gemini-3.1-flash-lite"
-  anthropic_model: "claude-sonnet-4-6"
+  provider: "openrouter"          # or "anthropic" or "gemini"
+  model: "google/gemini-3.1-flash-lite"
+  anthropic_model: "claude-sonnet-4-6"   # used when provider is "anthropic"
 ```
 
 | provider | key in `.env` | notes |
 |---|---|---|
+| `openrouter` | `OPENROUTER_API_KEY` | the current setting; `model` is an OpenRouter id (`vendor/name`) |
 | `anthropic` | `ANTHROPIC_API_KEY` | the spec's choice; also honours `ant auth login` |
-| `gemini` | `GEMINI_API_KEY` | needs `google-genai` |
+| `gemini` | `GEMINI_API_KEY` | direct Google API, used for the recorded live runs; needs `google-genai` |
 
 `src/llm_client.py` is the whole adapter. Both reasoning layers are written
 against one small surface, `client.messages.create(...)` returning content
@@ -224,16 +230,28 @@ dialect rejects several JSON Schema keywords (so tool schemas are filtered).
 
 ## Run
 
-```bash
-python -m src.generate_data --batches 4 --seed 42
-python -m src.generate_data --adversarial --seed 99
-python -m src.generate_data --batch 5 --seed 42 --overcharge   # rates quietly raised
+The dataset is fixed and committed in `data/`: batches 1-4, batch 5 (the month
+the aggregator quietly raised its rates) and an adversarial set, each with its
+answer key (`truth.csv`), which only `src/metrics.py` reads.
 
+### Quickest: open the recorded live run
+
+```bash
+cp db/live_final.db db/recon.db      # PowerShell: Copy-Item db\live_final.db db\recon.db -Force
+streamlit run app/dashboard.py       # http://localhost:8501
+```
+
+This shows the canonical run above, learned rules included, with no API calls.
+
+### Full run
+
+```bash
 python -m src.pipeline --reset-db
 python -m src.pipeline --batch 1
 python -m src.pipeline --batch 2
 python -m src.pipeline --batch 3
 python -m src.pipeline --batch 4
+python -m src.pipeline --batch 5          # rates quietly raised
 python -m src.pipeline --batch adversarial
 
 python -m src.metrics --report
@@ -241,14 +259,20 @@ python -m src.metrics --contract        # were you charged what you agreed to?
 streamlit run app/dashboard.py
 ```
 
-Without a key the pipeline still runs end to end: escalation disables itself
-once, with a message, and the deterministic layers do their work. You will see
-the batch-1 baseline (44.3% match rate, 68 exceptions) repeated for every batch
-and **no rules promoted**, because nothing is proposing any. That is the
-correct cold-start behaviour, not a failure, see the note above the results.
+With a key, the model proposes rules and the gate promotes them: the recorded
+run made 499 API calls in about 36 minutes, roughly $0.35 through OpenRouter at
+`google/gemini-3.1-flash-lite` prices. Re-running a batch replaces that batch's
+matches, exceptions and metrics rather than adding to them.
 
-Add `--no-llm` to skip the escalation attempt entirely. `python -m pytest` runs
-349 tests and needs no API key; the model is stubbed throughout.
+Add `--no-llm` to switch the model off. The deterministic layers still run, and
+the contract audit still catches batch 5's overcharge, but nothing proposes
+rules, so every batch stays at the batch-1 baseline (about 44% match rate, 68
+exceptions). That is the correct cold-start behaviour, not a failure. Without a
+key the pipeline behaves the same way: escalation disables itself once, with a
+message.
+
+`python -m pytest` runs 395 tests and needs no API key; the model is stubbed
+throughout.
 
 Ask it things:
 
@@ -256,6 +280,29 @@ Ask it things:
 python -m src.qa_agent "What have you learned about this merchant?"
 python -m src.qa_agent "Which exceptions have the most money at risk?"
 ```
+
+## Dashboard
+
+`streamlit run app/dashboard.py` reads whatever the pipeline saved in
+`db/recon.db`. It opens on the latest numbered batch, with a banner that answers
+the title question ("were you charged what you agreed to?") and six tabs:
+
+| Tab | Shows |
+|---|---|
+| **Summary** | where the money went: total sales, fees, GST, net settled, received in bank, overcharged vs contract; orders reconciled (order-level, stricter than the record-level match rate); a money-flow chart, fees and overcharge by payment method, and a per-method table |
+| **Contract audit** | contracted vs observed rate per payment method, the worst overcharged transactions, and when leakage started |
+| **How it learned** | exceptions, model calls, match rate, recall and precision across batches |
+| **Rule library** | the rules the model induced and the gate promoted, plus the proposals the gate blocked and why |
+| **Exceptions** | the open work queue, largest money at risk first |
+| **Ask** | the settlement Q&A agent (the only tab that needs an API key) |
+
+The sidebar holds the batch selector, three Summary-tab filters (payment method,
+order date, status) and the standing numbers. A figure the filters make
+unknowable is shown as "n/a" with a tooltip rather than as a wrong number: a
+bank deposit bundles every payment method, so "received in bank" cannot be split
+by method, and the contract audit prices a batch per method, not per date. The
+layout works in light and dark mode and on narrow screens, where the cards stack
+and the sidebar starts collapsed.
 
 ## How it works
 
@@ -272,6 +319,10 @@ Every node in the assignment problem also has an edge to an "unmatched" sink.
 If no pairing costs less than that sink, the solver *chooses* to leave the
 record unmatched. That edge is the mathematical statement of "be conservative
 with money", and it is why precision stays at 100%.
+
+Only a rule that accounts for the money, a fee formula or a refund pattern, can
+explain a pair. A timing window agrees with any two records settled on the
+usual day whatever their amounts, so on its own it never lowers a pair's cost.
 
 ## Cost model
 
@@ -290,40 +341,95 @@ code.
   word-parallel, DSU keeps components small, blocking avoids the quadratic),
   but that is an argument, not a measurement.
 - **This is a proof of concept, not a competitor.** Commercial auto-match
-  baselines sit above 90%. We reach 78.8% match rate at 88.9% recall on
-  synthetic data, having started from zero domain knowledge.
-- **The exception curve flattens after batch 2** at around 18-19 open
-  exceptions. What remains is unresolvable from the data: orders with
-  no settlement row at all, orphan settlements claiming orders that do not
+  baselines sit above 90%. By batch 4 of the canonical run we reach 80.3% match
+  rate at 93.2% recall on synthetic data (`db/live_final.db`), having started
+  from zero domain knowledge.
+- **The exception curve flattens after batch 2** at around 19-23 open
+  exceptions (21, 23 and 19 in batches 2-4 of the canonical run). What remains
+  is unresolvable from the data: orders with no settlement row at all, orphan settlements claiming orders that do not
   exist, and chargeback reversals. Those are exactly the things a controller
   should look at, so the floor is arguably correct, but it means the curve is
   a step, not a slope, and we show it that way.
-- **`narration_pattern` has never been induced.** The generator deliberately
-  writes narrations that carry no batch id, so there is no pattern to find. The
-  rule type is implemented and tested but unused, which is the honest outcome
-  for data built to defeat it.
 - **One merchant profile, one fee schedule.** Batches are thematically
   consistent by design, which is what makes the structure learnable at all.
 - **No real bank file parsing.** No MT940, no CAMT.053, no per-bank narration
   dialects. Narrations are synthetic and deliberately unhelpful.
 - **Single-currency, single-timezone**, and no partial-day settlement cutoffs.
 
+### Razorpay's real export format
+
+Each batch's `settlements.csv` uses the layout of Razorpay's combined settlement
+recon export (`GET /v1/settlements/recon/combined`): the same 26 fields in the
+documented order, amounts in paise, unix timestamps. `db.read_razorpay_settlements`
+translates it for the pipeline:
+
+- `fee` **includes** GST and `tax` is the GST part of it, so the MDR is
+  `fee - tax`;
+- a refund is its own `refund` row pointing at its payment (`payment_id`) and is
+  folded into that payment's net;
+- a chargeback is an `adjustment` row debiting the merchant and becomes a
+  negative row;
+- the merchant's order id is `order_receipt`.
+
+`settlement_utr` is deliberately not read. It is the aggregator's own claim
+about which bank credit each payment landed in; the bank leg proves that from
+the bank statement instead, which is what makes it independent evidence.
+
+What stays simplified: the values are synthetic, and the entity ids keep the
+dataset's own `STL-`/`CB-` ids rather than Razorpay's `pay_` ids so they line
+up with the recorded runs in `db/`. Card network and issuer are left blank. The
+order ledger and bank statement are plain CSVs, since those formats belong to
+the merchant's own system and to each bank, not to Razorpay.
+
 ## Repository
 
 ```
+src/pipeline.py         one batch end to end; the CLI
+src/db.py               SQLite storage, CSV ingestion, the Razorpay export reader
+src/schema.sql          every table; money columns are INTEGER paise
+src/config.py           loads config.yaml and .env
 src/money.py            integer paise, banker's rounding, all money math
 src/calendar_utils.py   O(1) working-day arithmetic, Indian holidays
-src/generate_data.py    synthetic data + adversarial traps (owns the constants)
 src/blocking.py         hash join, amount index, Union-Find
 src/subset_sum.py       bitset DP, subset recovery, ambiguity reporting
 src/assignment.py       Hungarian, min-cost flow, the unmatched sink
 src/deterministic.py    predicate evaluation, precedence DAG, backtest
+src/llm_client.py       provider adapter: Anthropic, Gemini, OpenRouter
 src/llm_reasoner.py     bounded LLM escalation with verification tools
 src/rule_engine.py      proposal intake, the promotion gate, retirement
+src/contract.py         contract compliance: fee charged vs fee agreed
 src/metrics.py          scoring, the ONLY module that reads ground truth
 src/qa_agent.py         settlement Q&A over SQLite with tool use
 app/dashboard.py        Streamlit
+app/summary.py          totals behind the dashboard's Summary tab
+data/                   the fixed synthetic dataset, with answer keys
+tests/                  395 tests; test_dataset.py checks the data itself
 ```
+
+## Changelog
+
+The latest revision, in brief:
+
+- **Fixes.** Re-running a batch replaces its outputs instead of doubling them. A
+  timing rule on its own no longer lets the assignment solver bind unrelated
+  records. With `provider: anthropic` the Anthropic model name is used, not the
+  other provider's.
+- **OpenRouter** is a provider (`provider: openrouter`), and the default.
+- **Dashboard:** a Summary tab with filters, a layout that works on narrow
+  screens and in dark mode, and it opens on the latest real batch.
+- **Contract audit:** reports the gross overcharge and the count of undercharged
+  transactions next to the net leakage.
+- **Q&A prompt:** fee correctness is judged against the contract, not against
+  learned rules.
+- **Data:** the synthetic generator is gone; the dataset is fixed and committed,
+  and each `settlements.csv` uses Razorpay's settlement recon export layout,
+  read by `db.read_razorpay_settlements`.
+- **Docs:** one canonical results table (`db/live_final.db`), with each figure
+  labelled by the run it comes from.
+- **Removed:** unused code (the `narration_pattern` rule type, which no data
+  could ever induce, `to_paise`, `split_proportional`, `db.query`, `db.py`'s
+  CLI, `first_match`, an unread latency field), the `matplotlib` dependency, a
+  stale learning-curve image, and `SUMMARY.md`.
 
 ## Architecture
 

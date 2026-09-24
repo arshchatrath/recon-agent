@@ -249,9 +249,9 @@ class BatchRun:
 
         Cheap structural join first, expensive search second, the same order
         blocking.py uses. A payout batch is a real grouping the aggregator
-        gives us (settlement_batch_id is in settlements.csv); what nobody tells
-        us is which UTR it arrived under, because the narration deliberately
-        does not carry it. So the first question is simply "does one payout
+        gives us (settlement_id in its settlement export); which UTR it
+        arrived under is proved from the bank statement rather than taken from
+        the aggregator's settlement_utr, and the narration does not carry it. So the first question is simply "does one payout
         batch sum exactly to this credit?", answered by a hash join.
 
         Subset-sum then earns its place on the residual: credits no batch sums
@@ -637,6 +637,11 @@ def run_batch(conn, batch_id: str, reasoner=None, use_llm=False) -> dict:
     """`use_llm` defaults off so tests and dry runs never spend money or need a
     key; the CLI turns it on unless --no-llm is passed."""
     ingest_batch(conn, batch_id)
+    # A re-run replaces the batch's outputs rather than stacking a second copy
+    # on top: two runs of batch 1 used to report 136 exceptions, not 68.
+    for table in ("matches", "exceptions", "run_metrics"):
+        conn.execute(f"DELETE FROM {table} WHERE batch_id = ?", (batch_id,))
+    conn.commit()
     return BatchRun(conn, batch_id, reasoner=reasoner, use_llm=use_llm).run()
 
 

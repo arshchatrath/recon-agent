@@ -1,42 +1,6 @@
-from decimal import Decimal
-
 import pytest
 
-from src.money import (apply_rate, format_paise, split_proportional, to_paise,
-                       within_tolerance)
-
-
-# ---------------------------------------------------------------- to_paise
-def test_to_paise_basic():
-    assert to_paise("1234.56") == 123456
-
-
-def test_to_paise_accepts_int_and_decimal():
-    assert to_paise(100) == 10000
-    assert to_paise(Decimal("0.01")) == 1
-
-
-def test_to_paise_strips_symbol_and_commas():
-    assert to_paise("₹1,23,456.78") == 12345678
-
-
-@pytest.mark.parametrize("s,expected", [
-    ("1234.565", 123456),   # half-even rounds DOWN to the even paise
-    ("1234.575", 123458),   # half-even rounds UP to the even paise
-    ("0.005", 0),
-    ("0.015", 2),
-])
-def test_to_paise_banker_rounding_at_half(s, expected):
-    assert to_paise(s) == expected
-
-
-def test_to_paise_negative():
-    assert to_paise("-12.34") == -1234
-
-
-def test_to_paise_rejects_garbage():
-    with pytest.raises(ValueError):
-        to_paise("twelve rupees")
+from src.money import apply_rate, format_paise, within_tolerance
 
 
 # ------------------------------------------------------------- format_paise
@@ -101,24 +65,3 @@ def test_within_tolerance(a, b, tol, expected):
 def test_within_tolerance_rejects_negative_tol():
     with pytest.raises(ValueError):
         within_tolerance(1, 1, -1)
-
-
-# --------------------------------------------------------- split_proportional
-def test_split_proportional_loses_no_paise():
-    parts = split_proportional(1001, [1, 1, 1])
-    assert sum(parts) == 1001
-    assert parts == [334, 334, 333]
-
-
-def test_split_proportional_respects_weights():
-    assert split_proportional(1000, [30, 70]) == [300, 700]
-
-
-def test_split_proportional_negative_amount_sums_back():
-    parts = split_proportional(-1001, [1, 1, 1])
-    assert sum(parts) == -1001
-
-
-def test_split_proportional_rejects_zero_weights():
-    with pytest.raises(ValueError):
-        split_proportional(100, [0, 0])

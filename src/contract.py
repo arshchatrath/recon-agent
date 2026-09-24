@@ -175,8 +175,11 @@ def leakage_report(conn, batch_id=None, cfg=None) -> dict:
         params.append(batch_id)
 
     per_instrument = defaultdict(lambda: {"transactions": 0, "leaked_paise": 0,
+                                          "overcharged_paise": 0,
                                           "charged_paise": 0, "agreed_paise": 0})
-    worst, total, n_over = [], 0, 0
+    # total nets undercharges against overcharges; gross_over does not, so an
+    # undercharge on one row can never hide an overcharge on another
+    worst, total, n_over, gross_over, n_under = [], 0, 0, 0, 0
     for r in conn.execute(sql, params):
         agreed = contract_fee(int(r["gross_amount_paise"]), r["instrument"], terms)
         if agreed is None:
@@ -192,8 +195,12 @@ def leakage_report(conn, batch_id=None, cfg=None) -> dict:
         b["agreed_paise"] += agreed
         b["leaked_paise"] += diff
         total += diff
+        if diff < 0:
+            n_under += 1
         if diff > 0:
             n_over += 1
+            gross_over += diff
+            b["overcharged_paise"] += diff
             worst.append({"settlement_txn_id": r["settlement_txn_id"],
                           "order_id": r["order_id_claimed"],
                           "instrument": r["instrument"],
@@ -207,6 +214,8 @@ def leakage_report(conn, batch_id=None, cfg=None) -> dict:
         "total_leaked_paise": total,
         "total_leaked": format_paise(total),
         "transactions_overcharged": n_over,
+        "gross_overcharged_paise": gross_over,
+        "transactions_undercharged": n_under,
         "transactions_checked": sum(v["transactions"] for v in per_instrument.values()),
         "by_instrument": {k: dict(v, leaked=format_paise(v["leaked_paise"]))
                           for k, v in per_instrument.items()},

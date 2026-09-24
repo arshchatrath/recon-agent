@@ -20,6 +20,7 @@ from scipy.optimize import linear_sum_assignment
 
 from src.calendar_utils import working_days_between
 from src.config import load
+from src.deterministic import evaluate
 
 log = logging.getLogger(__name__)
 SCALE = 1000          # min_cost_flow needs integer weights
@@ -71,7 +72,14 @@ def pair_cost(order, settlement, rules=None, cfg=None) -> float:
         lo, hi = window
         cost += cfg["w_date"] * max(lo - lag, lag - hi, 0)
 
-    if rules is None or rules.first_match(order, settlement) is None:
+    # Only a rule that accounts for the MONEY explains a pair, the same test
+    # pipeline.explain_amount applies. A timing window agrees with any two
+    # records settled on the usual day, whatever their amounts, so letting it
+    # count would bind an unrelated order and settlement at cost ~0.
+    explained = rules is not None and any(
+        evaluate(r.predicate, order, settlement, rules) is True
+        for r in rules.rules if r.rule_type in ("fee_formula", "refund_pattern"))
+    if not explained:
         cost += cfg["w_rule"] * cfg["unexplained_penalty"]
     return cost
 
@@ -81,20 +89,6 @@ def cost_matrix(orders, settlements, rules=None, cfg=None) -> np.ndarray:
     return np.array([[pair_cost(o, s, rules, cfg) for s in settlements]
                      for o in orders], dtype=float) if orders and settlements \
         else np.zeros((len(orders), len(settlements)))
-
-
-def greedy(orders, settlements, rules=None):
-    """Only here so the tests can prove the optimal solver beats it. Not used
-    by the pipeline."""
-    C = cost_matrix(orders, settlements, rules)
-    used_s, out = set(), []
-    for i in np.argsort(C.min(axis=1) if C.size else []):
-        order = [j for j in np.argsort(C[i]) if j not in used_s]
-        if order:
-            j = order[0]
-            used_s.add(j)
-            out.append((orders[i], settlements[j], float(C[i][j])))
-    return out
 
 
 def solve_hungarian(orders, settlements, rules=None):

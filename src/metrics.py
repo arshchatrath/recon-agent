@@ -25,7 +25,7 @@ from src.config import load
 from src.db import DATA_DIR, get_conn
 from src.money import format_paise
 
-UNRESOLVED = {"UNSETTLED", "ORPHAN", "DUPLICATE"}
+UNRESOLVED = {"UNSETTLED", "ORPHAN"}
 
 
 def truth_path(batch_id: str) -> Path:

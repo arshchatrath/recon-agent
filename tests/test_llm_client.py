@@ -216,10 +216,88 @@ def test_a_non_json_tool_result_is_still_deliverable(monkeypatch, fake_genai):
     assert fr.response == {"result": "not json at all"}
 
 
+# ----------------------------------------------------------------- OpenRouter
+def openrouter(monkeypatch, *replies, status=200):
+    """An OpenRouterClient whose HTTP calls hit a fake transport. -> (client, sent)"""
+    import httpx
+    from src.llm_client import OpenRouterClient
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    sent, queue = [], list(replies)
+
+    def handler(request):
+        sent.append(json.loads(request.content))
+        return httpx.Response(status, json=queue.pop(0) if queue else {})
+    c = OpenRouterClient()
+    c._http = httpx.Client(transport=httpx.MockTransport(handler))
+    return c, sent
+
+
+def reply(content=None, tool_calls=None):
+    return {"choices": [{"message": {"content": content, "tool_calls": tool_calls}}],
+            "usage": {"prompt_tokens": 11, "completion_tokens": 7}}
+
+
+def test_openrouter_missing_key_is_the_shape_the_pipeline_disables_on(monkeypatch):
+    from src.llm_client import OpenRouterClient
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    with pytest.raises(TypeError, match="authentication"):
+        OpenRouterClient()
+
+
+def test_openrouter_tool_loop_round_trips(monkeypatch):
+    c, sent = openrouter(monkeypatch, reply(tool_calls=[{
+        "id": "call_1", "type": "function",
+        "function": {"name": "calculate", "arguments": '{"expression": "1+1"}'}}]),
+        reply(content='{"ok": true}'))
+    tools = [{"name": "calculate", "description": "adds",
+              "input_schema": {"type": "object",
+                               "properties": {"expression": {"type": "string"}}}}]
+
+    first = c.messages.create(model="m", max_tokens=10, system="be good",
+                              tools=tools,
+                              messages=[{"role": "user", "content": "go"}])
+    tu = first.content[0]
+    assert (tu.type, tu.name, tu.input) == ("tool_use", "calculate",
+                                           {"expression": "1+1"})
+    assert first.usage.input_tokens == 11 and first.usage.output_tokens == 7
+    assert sent[0]["messages"][0] == {"role": "system", "content": "be good"}
+    assert sent[0]["tools"][0]["function"]["name"] == "calculate"
+
+    second = c.messages.create(model="m", max_tokens=10, messages=[
+        {"role": "user", "content": "go"},
+        {"role": "assistant", "content": first.content},
+        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "call_1",
+                                      "content": json.dumps({"result": 2})}]}])
+    asst, tool = sent[1]["messages"][1], sent[1]["messages"][2]
+    assert asst["tool_calls"][0]["function"]["name"] == "calculate"
+    assert tool == {"role": "tool", "tool_call_id": "call_1",
+                    "content": '{"result": 2}'}
+    assert second.content[0].text == '{"ok": true}'
+
+
+def test_openrouter_bad_key_is_unrecoverable(monkeypatch):
+    from src.llm_reasoner import LLMReasoner
+    c, _ = openrouter(monkeypatch, status=401)
+    with pytest.raises(Exception) as e:
+        c.messages.create(model="m", max_tokens=10,
+                          messages=[{"role": "user", "content": "x"}])
+    assert LLMReasoner._is_unrecoverable(e.value)
+
+
+def test_openrouter_error_inside_a_200_is_raised(monkeypatch):
+    c, _ = openrouter(monkeypatch, {"error": {"message": "upstream down"}})
+    with pytest.raises(RuntimeError, match="upstream down"):
+        c.messages.create(model="m", max_tokens=10,
+                          messages=[{"role": "user", "content": "x"}])
+
+
 # -------------------------------------------------------------- make_client
 def test_make_client_selects_the_provider(monkeypatch, fake_genai):
+    from src.llm_client import OpenRouterClient
     monkeypatch.setenv("GEMINI_API_KEY", "k")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
     assert isinstance(make_client("gemini"), GeminiClient)
+    assert isinstance(make_client("openrouter"), OpenRouterClient)
 
 
 def test_an_unknown_provider_is_rejected_loudly():

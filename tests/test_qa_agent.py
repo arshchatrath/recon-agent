@@ -240,7 +240,7 @@ def test_a_missing_key_says_how_to_fix_it(populated):
                      "api_key, auth_token, or credentials to be set.")
     qa = SettlementQA(conn=populated, client=StubClient([auth]))
     out = qa.ask("What have you learned about this merchant?")
-    assert "ANTHROPIC_API_KEY" in out["answer"]
+    assert ".env.example" in out["answer"]
     assert "src.metrics --report" in out["answer"]
 
 
@@ -257,3 +257,9 @@ def test_the_system_prompt_forbids_unsourced_figures_and_requires_citations():
     assert "Sources: " in SYSTEM_PROMPT
     assert "I don't have that in the reconciled data" in SYSTEM_PROMPT
     assert "caveated wrong number is still a wrong number" in SYSTEM_PROMPT
+
+
+def test_the_prompt_judges_fees_against_the_contract_not_the_learned_rules():
+    assert "contracted rates in config.yaml" in SYSTEM_PROMPT
+    assert "list_learned_rules" in SYSTEM_PROMPT
+    assert "rather than being told" not in SYSTEM_PROMPT

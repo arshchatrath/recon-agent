@@ -6,21 +6,9 @@ banker's (ROUND_HALF_EVEN) everywhere, applied via Decimal. Python's
 built-in round() on floats inherits binary-representation errors
 (round(2.675, 2) == 2.67) and is not safe for money.
 """
-from decimal import Decimal, ROUND_HALF_EVEN, InvalidOperation
+from decimal import Decimal, ROUND_HALF_EVEN
 
-__all__ = [
-    "to_paise", "format_paise", "apply_rate", "within_tolerance",
-    "split_proportional",
-]
-
-
-def to_paise(rupees) -> int:
-    """'1234.56' / Decimal / int -> 123456 paise. Half-even at the paise."""
-    try:
-        d = Decimal(str(rupees).strip().replace(",", "").replace("\u20b9", ""))
-    except InvalidOperation as e:
-        raise ValueError(f"not a rupee amount: {rupees!r}") from e
-    return int((d * 100).quantize(Decimal(1), rounding=ROUND_HALF_EVEN))
+__all__ = ["format_paise", "apply_rate", "within_tolerance"]
 
 
 def format_paise(p: int) -> str:
@@ -53,22 +41,3 @@ def within_tolerance(a: int, b: int, tol: int) -> bool:
     if tol < 0:
         raise ValueError("tolerance must be >= 0")
     return abs(a - b) <= tol
-
-
-def split_proportional(amount: int, weights) -> list[int]:
-    """Split `amount` across `weights` losing not one paise (largest remainder).
-
-    Used for split settlements: the parts must re-sum to the whole exactly.
-    """
-    weights = list(weights)
-    if not weights or any(w < 0 for w in weights) or sum(weights) == 0:
-        raise ValueError("weights must be non-empty, non-negative, non-zero-sum")
-    total_w = sum(weights)
-    exact = [Decimal(amount) * Decimal(w) / Decimal(total_w) for w in weights]
-    floors = [int(e.to_integral_value(rounding="ROUND_FLOOR")) for e in exact]
-    short = amount - sum(floors)
-    # hand the leftover paise to the largest fractional parts, ties by index
-    order = sorted(range(len(weights)), key=lambda i: (-(exact[i] - floors[i]), i))
-    for i in order[:abs(short)]:
-        floors[i] += 1 if short > 0 else -1
-    return floors

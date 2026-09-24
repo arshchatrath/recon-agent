@@ -12,7 +12,7 @@ out. Keeping the translation here means `llm_reasoner.py` and `qa_agent.py`
 never learn which provider they are talking to, and it is the same surface
 the test stubs implement, so the tested path and the shipped path are one path.
 
-Select with `llm.provider` in config.yaml.
+Select with `llm.provider` in config.yaml: anthropic, gemini or openrouter.
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ import uuid
 
 log = logging.getLogger(__name__)
 
-__all__ = ["make_client", "Block", "Response", "BlockList"]
+__all__ = ["make_client", "Block", "Response", "BlockList", "OpenRouterClient"]
 
 
 class Block:
@@ -199,6 +199,107 @@ class GeminiClient:
         return contents, names
 
 
+# ----------------------------------------------------------------- OpenRouter
+# OpenRouter speaks the OpenAI chat-completions dialect. Plain httpx (already
+# installed as an anthropic dependency) rather than the openai SDK: the whole
+# surface used here is one POST.
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+
+
+class AuthenticationError(Exception):
+    """Named so llm_reasoner._is_unrecoverable stops retrying a bad key."""
+
+
+def _get(b, key):
+    return b.get(key) if isinstance(b, dict) else getattr(b, key, None)
+
+
+class _OpenRouterMessages:
+    def __init__(self, outer):
+        self.outer = outer
+
+    def create(self, *, model, max_tokens, messages, system=None, tools=None,
+               output_config=None, **_):
+        # output_config is ignored: tools always ride along in the reasoner,
+        # and many routed models reject a response schema next to them. The
+        # JSON contract is in the prompt, backed by the malformed-reply retry.
+        body = {"model": model, "max_tokens": max_tokens,
+                "messages": _to_openai(messages, system)}
+        if tools:
+            body["tools"] = [{"type": "function", "function": {
+                "name": t["name"], "description": t.get("description", ""),
+                "parameters": t["input_schema"]}} for t in tools]
+
+        r = self.outer._http.post(OPENROUTER_URL, json=body)
+        if r.status_code in (401, 403):
+            raise AuthenticationError(f"OpenRouter rejected the key: {r.text[:200]}")
+        r.raise_for_status()
+        data = r.json()
+        if "error" in data or not data.get("choices"):
+            # OpenRouter reports upstream failures inside a 200
+            raise RuntimeError(f"OpenRouter error: {data.get('error', data)}")
+
+        msg = data["choices"][0]["message"]
+        blocks = []
+        if msg.get("content"):
+            blocks.append(Block(type="text", text=msg["content"]))
+        for tc in msg.get("tool_calls") or []:
+            try:
+                args = json.loads(tc["function"].get("arguments") or "{}")
+            except json.JSONDecodeError:
+                args = {}      # the tool then reports the missing argument back
+            blocks.append(Block(type="tool_use", id=tc["id"],
+                                name=tc["function"]["name"], input=args))
+        u = data.get("usage") or {}
+        return Response(BlockList(blocks),
+                        Usage(u.get("prompt_tokens"), u.get("completion_tokens")))
+
+
+def _to_openai(messages, system):
+    """Anthropic-shaped messages -> OpenAI chat messages."""
+    out = [{"role": "system", "content": system}] if system else []
+    for m in messages:
+        role, content = m["role"], m["content"]
+        if isinstance(content, str):
+            out.append({"role": role, "content": content})
+            continue
+        texts, calls = [], []
+        for b in content:
+            t = _get(b, "type")
+            if t == "tool_result":
+                payload = _get(b, "content")
+                out.append({"role": "tool", "tool_call_id": _get(b, "tool_use_id"),
+                            "content": payload if isinstance(payload, str)
+                            else json.dumps(payload)})
+            elif t == "text":
+                texts.append(_get(b, "text"))
+            elif t == "tool_use":
+                calls.append({"id": _get(b, "id"), "type": "function",
+                              "function": {"name": _get(b, "name"),
+                                           "arguments": json.dumps(_get(b, "input"))}})
+        if texts or calls:
+            msg = {"role": role, "content": "\n".join(texts) or None}
+            if calls:
+                msg["tool_calls"] = calls
+            out.append(msg)
+    return out
+
+
+class OpenRouterClient:
+    """Presents the Anthropic messages surface over OpenRouter."""
+
+    def __init__(self, api_key=None):
+        import httpx
+        key = api_key or os.environ.get("OPENROUTER_API_KEY")
+        if not key:
+            raise TypeError(
+                "Could not resolve authentication method. Set OPENROUTER_API_KEY "
+                "for the openrouter provider.")
+        self._http = httpx.Client(timeout=120,
+                                  headers={"Authorization": f"Bearer {key}"})
+        self.messages = _OpenRouterMessages(self)
+
+
 # ------------------------------------------------------------------ selection
 def make_client(provider: str = "anthropic", api_key=None):
     # Load .env here rather than relying on a caller having done it: this is
@@ -213,5 +314,7 @@ def make_client(provider: str = "anthropic", api_key=None):
             else anthropic.Anthropic()
     if provider == "gemini":
         return GeminiClient(api_key)
+    if provider == "openrouter":
+        return OpenRouterClient(api_key)
     raise ValueError(f"unknown llm provider {provider!r}; "
-                     "expected 'anthropic' or 'gemini'")
+                     "expected 'anthropic', 'gemini' or 'openrouter'")

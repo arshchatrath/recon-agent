@@ -41,7 +41,7 @@ RESPONSE_SCHEMA = {
             "properties": {
                 "type": {"type": ["string", "null"],
                          "enum": ["fee_formula", "timing_window",
-                                  "refund_pattern", "narration_pattern", None]},
+                                  "refund_pattern", None]},
                 "instrument": {"type": "string"},
                 "params": {"type": "object", "additionalProperties": True},
                 "tolerance_paise": {"type": "integer", "minimum": 0},
@@ -108,7 +108,6 @@ Rule predicate forms you may propose, and nothing else:
                    meaning net = gross - fee - round(fee * gst)
   timing_window    params {"min_working_days": <int>, "max_working_days": <int>}
   refund_pattern   params {}, the net falls short of the fee-implied net
-  narration_pattern params {"regex": "<one capture group>"}
 
 When you have finished calling tools, your FINAL reply must be one JSON object
 and nothing else, no prose around it, no markdown fence:
@@ -119,7 +118,7 @@ and nothing else, no prose around it, no markdown fence:
  "reasoning": "<why>",
  "residual_explanation": "<what accounts for the amount difference>",
  "proposed_rule": null | {"type": "fee_formula" | "timing_window" |
-                                  "refund_pattern" | "narration_pattern",
+                                  "refund_pattern",
                           "instrument": "<UPI|CARD_CREDIT|CARD_DEBIT|
                                           NETBANKING|ALL>",
                           "params": {...},
@@ -220,7 +219,6 @@ class LLMVerdict:
     calls: int = 0
     tokens_in: int = 0
     tokens_out: int = 0
-    latency_seconds: float = 0.0
     error: str | None = None
     tool_calls: list = field(default_factory=list)
 
@@ -235,7 +233,9 @@ class LLMReasoner:
     def __init__(self, conn, rules, client=None, model=None, cfg=None):
         self.conn, self.rules = conn, rules
         self.cfg = cfg or load()["llm"]
-        self.model = model or self.cfg["model"]
+        self.model = model or (self.cfg["anthropic_model"]
+                               if self.cfg.get("provider") == "anthropic"
+                               else self.cfg["model"])
         self._client = client
         self.calls = self.tokens_in = self.tokens_out = 0
         self.calls_avoided = 0
@@ -297,7 +297,6 @@ class LLMReasoner:
     def resolve(self, case: dict) -> LLMVerdict:
         """One case -> one verdict. Never raises: an API failure comes back as
         a verdict carrying `error`, and the caller records an exception."""
-        t0 = time.time()
         v = LLMVerdict()
         if self.disabled:
             v.error = self.disabled
@@ -307,7 +306,6 @@ class LLMReasoner:
         for attempt in range(self.cfg.get("max_retries", 3)):
             try:
                 v = self._converse(messages, v)
-                v.latency_seconds = time.time() - t0
                 self._consecutive_failures = 0
                 return self._apply_floor(v)
             except _MalformedResponse as e:
@@ -323,8 +321,9 @@ class LLMReasoner:
                 if self._is_unrecoverable(e):
                     self.disabled = v.error
                     log.error("LLM escalation disabled for this run: %s. The "
-                              "deterministic layers continue; set "
-                              "ANTHROPIC_API_KEY to enable rule induction.", e)
+                              "deterministic layers continue; set the key "
+                              "for llm.provider in .env (see .env.example) "
+                              "to enable rule induction.", e)
                     break
                 log.warning("LLM call failed (attempt %d): %s", attempt + 1, e)
                 time.sleep(min(2 ** attempt, 8))
@@ -332,7 +331,6 @@ class LLMReasoner:
         v.verdict = "insufficient_information"
         v.confidence = 0.0
         v.error = v.error or "response never parsed"
-        v.latency_seconds = time.time() - t0
 
         # Every retry for this case was spent and none worked. If that keeps
         # happening the problem is not this case, it is the service (an
@@ -423,9 +421,6 @@ class LLMReasoner:
         elif pred["type"] == "refund_pattern":
             pred["condition"] = "net < expected_net"
             pred["residual_explained_by"] = "partial_refund"
-        elif pred["type"] == "narration_pattern":
-            pred["regex"] = params.get("regex", "")
-            pred["maps_to"] = "settlement_batch_id"
         try:
             return validate_predicate(pred)
         except PredicateError as e:

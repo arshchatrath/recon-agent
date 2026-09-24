@@ -291,8 +291,9 @@ def test_backtest_rewards_a_rule_that_agrees_with_history(conn):
 def test_backtest_is_silent_about_rules_that_do_not_apply(conn):
     ingest_batch(conn, "1")
     run_batch(conn, "1")
-    out = backtest(conn, {"type": "narration_pattern", "regex": "(NOPE)",
-                          "maps_to": "settlement_batch_id"})
+    # scoped to a payment method the data never uses, so it applies nowhere
+    out = backtest(conn, {"type": "fee_formula", "instrument": "WALLET",
+                          "params": {"rate": 0.01, "gst": 0.18}})
     assert out["support"] == 0 and out["precision"] == 0.0
 
 
@@ -507,3 +508,20 @@ def test_a_success_resets_the_failure_streak(conn):
     assert r.resolve(CASE).usable         # resets
     assert r.resolve(CASE).error          # streak 1 again, not 2
     assert r.disabled is None
+
+
+# ------------------------------------------------------ model per provider
+@pytest.mark.parametrize("provider, expected", [
+    ("anthropic", "claude-test"), ("openrouter", "vendor/generic-model")])
+def test_the_model_name_follows_the_provider(monkeypatch, provider, expected):
+    """Switching to anthropic must not send the other provider's model name."""
+    import src.qa_agent
+    from src.qa_agent import SettlementQA
+    cfg = dict(load()["llm"], provider=provider, model="vendor/generic-model",
+               anthropic_model="claude-test")
+    assert LLMReasoner(None, RuleSet([]), cfg=cfg).model == expected
+    assert LLMReasoner(None, RuleSet([]), cfg=cfg, model="explicit").model == "explicit"
+
+    monkeypatch.setattr(src.qa_agent, "load", lambda: {"llm": cfg})
+    assert SettlementQA(conn=object()).model == expected
+    assert SettlementQA(conn=object(), model="explicit").model == "explicit"

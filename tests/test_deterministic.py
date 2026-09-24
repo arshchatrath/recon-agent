@@ -38,9 +38,6 @@ def test_valid_predicates_pass():
                "min_working_days": 1, "max_working_days": 1},
               {"type": "refund_pattern", "instrument": ALL,
                "condition": "net < expected_net", "tolerance_paise": 2},
-              {"type": "narration_pattern",
-               "regex": r"NEFT-RAZORPAY-([A-Z0-9]+)",
-               "maps_to": "settlement_batch_id"},
               {"type": "fee_formula", "instrument": "NETBANKING",
                "params": {"flat_paise": 500, "gst": 0.2}}):
         assert validate_predicate(p)["type"] == p["type"]
@@ -56,8 +53,7 @@ def test_valid_predicates_pass():
      "expr": "net = gross - os.system('rm -rf /')"},            # not a template
     {"type": "timing_window", "min_working_days": 5, "max_working_days": 1},
     {"type": "refund_pattern", "condition": "net > 0"},
-    {"type": "narration_pattern", "regex": "([", "maps_to": "settlement_batch_id"},
-    {"type": "narration_pattern", "regex": "(x)", "maps_to": "utr"},
+    {"type": "narration_pattern", "regex": "(x)"},             # not a rule type
 ])
 def test_unparseable_predicates_are_rejected_at_proposal_time(bad):
     with pytest.raises(PredicateError):
@@ -118,14 +114,6 @@ def test_timing_window_counts_working_days_over_a_weekend():
                     stl(dt="2025-01-14T10:00:00")) is True
     assert evaluate(p, order(dt="2025-01-10T10:00:00"),
                     stl(dt="2025-01-13T10:00:00")) is False
-
-
-def test_narration_pattern_matches_the_batch_id():
-    p = {"type": "narration_pattern", "regex": r"NEFT-RAZORPAY-([A-Z0-9]+)",
-         "maps_to": "settlement_batch_id"}
-    credit = dict(narration="NEFT-RAZORPAY-SB1")
-    assert evaluate(p, credit, stl(batch="SB1")) is True
-    assert evaluate(p, credit, stl(batch="SB2")) is False
 
 
 REFUND = {"type": "refund_pattern", "instrument": ALL,
@@ -191,12 +179,6 @@ def test_ruleset_exposes_learned_economics_only():
                                          "max_working_days": 1})])
     assert learned.expected_net(100_000, "CARD_CREDIT") == 96_400
     assert learned.expected_lag("UPI") == (1, 1)
-
-
-def test_first_match_returns_the_rule_that_fired():
-    rs = RuleSet([rule(7, "fee_formula", "CARD_CREDIT", fee_pred())])
-    assert rs.first_match(order(), stl(net=96_400)).rule_id == 7
-    assert rs.first_match(order(), stl(net=1)) is None
 
 
 # ------------------------------------------------------------ precedence

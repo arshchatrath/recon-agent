@@ -80,7 +80,7 @@ CREATE TABLE IF NOT EXISTS rules (
     rule_id          INTEGER PRIMARY KEY AUTOINCREMENT,
     rule_type        TEXT NOT NULL
         CHECK (rule_type IN ('exact_id','fee_formula','timing_window',
-                             'refund_pattern','narration_pattern')),
+                             'refund_pattern')),
     scope_instrument TEXT NOT NULL DEFAULT 'ALL',
     predicate_json   TEXT NOT NULL,
     priority         INTEGER NOT NULL DEFAULT 100,

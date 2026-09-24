@@ -10,7 +10,7 @@ import pytest
 from src.contract import (compare_to_contract, contract_fee, contract_terms,
                           leakage_report, observed_schedule, render)
 from src.db import ingest_batch, reset_db
-from src.generate_data import GST_RATE, MDR
+from tests.test_dataset import GST_RATE, MDR
 
 
 @pytest.fixture
@@ -192,4 +192,25 @@ def test_the_qa_agent_can_answer_am_i_being_overcharged(tmp_path):
                                                  "NETBANKING"}
     assert out["total_fee_leakage_paise"] > 0
     assert out["worst_transactions"][0]["over_by"].startswith("₹")
+    c.close()
+
+
+def test_an_undercharge_cannot_hide_an_overcharge(tmp_path):
+    """One CARD_CREDIT transaction over the contract, one under. The netted
+    total keeps its old meaning; the gross figure shows the overcharge whole."""
+    c = reset_db(tmp_path / "u.db")
+    gross = 100_000                                  # contract fee: 2000 + 360
+    for i, charged in enumerate((2360 + 500, 2360 - 300)):
+        c.execute("INSERT INTO orders VALUES (?,?,?,?,?,?,?)",
+                  (f"O{i}", "b", "x", "2025-01-06T10:00:00", gross,
+                   "CARD_CREDIT", "captured"))
+        c.execute("INSERT INTO settlements VALUES (?,?,?,?,?,?,?,?,?,?)",
+                  (f"S{i}", "b", f"O{i}", "2025-01-08T10:00:00", gross, 0, 0,
+                   gross - charged, "SB", "CARD_CREDIT"))
+    lk = leakage_report(c, "b")
+    assert lk["total_leaked_paise"] == 200           # netted, unchanged behaviour
+    assert lk["gross_overcharged_paise"] == 500
+    assert lk["transactions_overcharged"] == 1
+    assert lk["transactions_undercharged"] == 1
+    assert lk["by_instrument"]["CARD_CREDIT"]["overcharged_paise"] == 500
     c.close()

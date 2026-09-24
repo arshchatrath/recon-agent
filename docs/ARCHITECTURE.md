@@ -11,7 +11,7 @@ The same thing in text, for grepping:
                                   │
                                   ▼
                           ┌───────────────┐
-                          │   ingestion   │  db.py, integer paise only
+                          │   ingestion   │  db.py: Razorpay recon export -> integer paise
                           └───────┬───────┘
                                   ▼
         ┌─────────────────────────────────────────────────┐
@@ -112,8 +112,9 @@ rather than leg-against-order.
 ## Why deterministic-first
 
 **Cost.** An LLM call per record does not survive contact with production
-volumes. Batch 1 spends 43.5 calls per 100 records; batch 4 spends 9.8 for
-better results. The calls that are *not* made are the point, and they are
+volumes. In the canonical live run (`db/live_final.db`), batch 1 spends 171.8
+calls per 100 records; batch 4 spends 34.8 for better results. (A call here is
+one API request, and a single escalated case can take several tool-use turns.) The calls that are *not* made are the point, and they are
 counted (`llm_calls_avoided`), not estimated.
 
 **Provability.** A match produced by the Hungarian algorithm is optimal under a
@@ -185,13 +186,16 @@ LLM-authored expression is never `eval`'d. The `calculate` tool parses with
 `ast` and walks the tree, rejecting anything but arithmetic, eight injection
 attempts are parametrised tests.
 
-**Job 2, explain and disambiguate.** A verdict of `match` is written as
-`match_kind='llm_resolved'`, `resolved_by='llm'`, never `exact`. Below the
-confidence floor (0.75) the verdict is discarded regardless of what the model
-said, and the record stays an open exception with the reasoning attached for a
-human. `insufficient_information` is prompted for explicitly and is a valued
-answer, a model that never abstains is a model that manufactures false
-positives.
+**Job 2, explain and disambiguate.** A verdict of `match` is **advisory only**.
+It is recorded on the exception's reason text for a human to read, and it is
+never written as a match (`pipeline.run_llm_leg`). The record stays an open
+exception. This changed after a live run: while this path was allowed to write
+matches, it produced all 53 false positives in that run (39 of them in batch 1,
+`db/live.db`), each at confidence 1.0, so no confidence floor could have
+filtered them. The floor (0.75) still applies: a lower-confidence verdict is
+downgraded to `insufficient_information` before it is offered as advice.
+`insufficient_information` is prompted for explicitly and is a valued answer,
+a model that never abstains is a model that manufactures false positives.
 
 The model can also call `check_rule_against_history` to backtest a rule
 *before* proposing it. Giving it the same gate it will be judged by is cheaper
@@ -236,7 +240,7 @@ was never asked. That status column is ledger data, not ground truth.
 ## What is verified, and what is not
 
 The deterministic layers, the gate, the metrics and the storage are exercised
-by 349 tests and by full runs over five batches, with the proposal step driven
+by 395 tests and by full runs over five batches, with the proposal step driven
 by a test double.
 
 The proposal step has separately been run live (Gemini 3.1 Flash Lite, batch 1,

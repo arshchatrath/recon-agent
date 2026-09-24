@@ -34,7 +34,7 @@ def scored(conn):
 def test_only_metrics_reads_the_truth_files():
     """The static guard, restated here so the wall is asserted from both sides."""
     for mod in SRC.glob("*.py"):
-        if mod.name in ("metrics.py", "generate_data.py"):
+        if mod.name == "metrics.py":
             continue
         text = mod.read_text(encoding="utf-8")
         for lit in ('truth.csv"', "truth.csv'", 'adversarial_truth"',

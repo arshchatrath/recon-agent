@@ -2,9 +2,25 @@
 solvers do not, and every solver may decline to match at all."""
 import json
 
-from src.assignment import (cost_matrix, greedy, solve_component,
+import numpy as np
+
+from src.assignment import (cost_matrix, solve_component,
                             solve_hungarian, solve_min_cost_flow)
 from src.deterministic import Rule, RuleSet
+
+
+def greedy(orders, settlements, rules=None):
+    """The locally-cheapest-first matcher the optimal solvers are measured
+    against. Not used by the pipeline."""
+    C = cost_matrix(orders, settlements, rules)
+    used_s, out = set(), []
+    for i in np.argsort(C.min(axis=1) if C.size else []):
+        order = [j for j in np.argsort(C[i]) if j not in used_s]
+        if order:
+            j = order[0]
+            used_s.add(j)
+            out.append((orders[i], settlements[j], float(C[i][j])))
+    return out
 
 
 def order(oid, gross, instr="CARD_CREDIT", dt="2025-01-06T10:00:00"):
@@ -91,6 +107,26 @@ def test_empty_rule_library_matches_nothing():
     matched, uo, us = solve_hungarian([a, b], [sa, sb], rules)
     assert matched == [], "batch 1 with no learned rules must not match"
     assert len(uo) == 2 and len(us) == 2
+
+
+def test_a_timing_rule_alone_does_not_explain_a_pair():
+    """A timing window agrees with any two records settled on the usual day.
+    With the amount clearly wrong, only the timing rule fires, so the pair must
+    still carry the unexplained penalty and be left unmatched."""
+    from src.assignment import pair_cost
+    from src.config import load
+    timing = Rule(2, "timing_window", "CARD_CREDIT", json.dumps(
+        {"type": "timing_window", "instrument": "CARD_CREDIT",
+         "min_working_days": 2, "max_working_days": 2}), 10)
+    rules = RuleSet(fee_rules().rules + [timing])
+    a = order("A", 100_000)                                   # Mon 6 Jan
+    wrong = stl("SX", 60_000, 60_000 - 1800 - 360)            # Wed 8 Jan: lag 2
+    assert rules.expected_lag("CARD_CREDIT") == (2, 2)
+
+    penalty = load()["assignment"]["unexplained_penalty"]
+    assert pair_cost(a, wrong, rules) >= penalty
+    matched, uo, us = solve_hungarian([a], [wrong], rules)
+    assert matched == [] and uo and us
 
 
 # ------------------------------------------------------------ min-cost flow

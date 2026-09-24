@@ -10,8 +10,8 @@ import json
 import pytest
 
 from src.db import reset_db
-from src.generate_data import GST_RATE, LAG_WORKING_DAYS, MDR, DEFAULT_LAG
 from src.pipeline import BatchRun, run_batch
+from tests.test_dataset import DEFAULT_LAG, GST_RATE, LAG_WORKING_DAYS, MDR
 
 
 @pytest.fixture
@@ -24,7 +24,7 @@ def conn(tmp_path):
 def seed_true_rules(conn):
     """Insert the rules the system is *supposed* to induce in Phase 5, so we can
     prove the deterministic layer uses them correctly once it has them. Imported
-    from the generator rather than retyped, so there is one source of truth."""
+    from the dataset tests rather than retyped, so there is one source of truth."""
     rid = 10
     for instr, (kind, v) in MDR.items():
         params = ({"flat_paise": int(v)} if kind == "flat" else {"rate": v})
@@ -100,6 +100,17 @@ def test_unsettled_orders_become_exceptions_carrying_their_full_gross(conn):
 def test_orphan_settlements_are_detected(conn):
     run_batch(conn, "1")
     assert counts(conn, "exceptions", "reason_code").get("ORPHAN_SETTLEMENT", 0) >= 1
+
+
+def test_running_a_batch_twice_leaves_the_same_results_as_running_it_once(conn):
+    def n(table):
+        return conn.execute(f"SELECT COUNT(*) c FROM {table} WHERE batch_id='1'"
+                            ).fetchone()["c"]
+    run_batch(conn, "1")
+    once = {t: n(t) for t in ("matches", "exceptions", "run_metrics")}
+    run_batch(conn, "1")
+    assert {t: n(t) for t in once} == once
+    assert once["run_metrics"] == 1
 
 
 # --------------------------------------------- what learning will unlock
